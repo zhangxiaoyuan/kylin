@@ -74,7 +74,8 @@ public class CreateFlatHiveTableStep extends AbstractExecutable {
     }
 
     private void createFlatHiveTable(KylinConfig config, int numReducers) throws IOException {
-        final HiveCmdBuilder hiveCmdBuilder = new HiveCmdBuilder();
+        final String hiveName = getHiveName();
+        final HiveCmdBuilder hiveCmdBuilder = new HiveCmdBuilder(hiveName);
         hiveCmdBuilder.addStatement(getInitStatement());
         boolean useRedistribute = getUseRedistribute();
         if (useRedistribute == true) {
@@ -157,5 +158,13 @@ public class CreateFlatHiveTableStep extends AbstractExecutable {
 
     public String getRowCountOutputDir() {
         return getParam("rowCountOutputDir");
+    }
+    
+    public void setHiveName(String hiveName) {
+        setParam("hiveName", hiveName);
+    }
+    
+    public String getHiveName() {
+        return getParam("hiveName");
     }
 }

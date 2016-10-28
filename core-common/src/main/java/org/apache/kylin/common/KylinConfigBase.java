@@ -721,6 +721,7 @@ abstract public class KylinConfigBase implements Serializable {
         Map<Integer, String> r = convertKeyToInteger(getPropertiesByPrefix("kylin.source.engine."));
         // ref constants in ISourceAware
         r.put(0, "org.apache.kylin.source.hive.HiveSource");
+        r.put(6, "org.apache.kylin.source.hive.external.ExternalHiveSource");
         return r;
     }
 

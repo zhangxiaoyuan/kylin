@@ -28,6 +28,7 @@ import org.apache.kylin.job.exception.ExecuteException;
 import org.apache.kylin.job.execution.AbstractExecutable;
 import org.apache.kylin.job.execution.ExecutableContext;
 import org.apache.kylin.job.execution.ExecuteResult;
+import org.apache.kylin.source.hive.external.HiveManager;
 import org.datanucleus.store.types.backed.HashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,6 +43,7 @@ public class HqlExecutable extends AbstractExecutable {
     private static final Logger logger = LoggerFactory.getLogger(HqlExecutable.class);
 
     private static final String HQL = "hql";
+    private static final String HIVE_NAME = "hive-name";
     private static final String HIVE_CONFIG = "hive-config";
 
     public HqlExecutable() {
@@ -52,7 +54,8 @@ public class HqlExecutable extends AbstractExecutable {
     protected ExecuteResult doWork(ExecutableContext context) throws ExecuteException {
         try {
             Map<String, String> configMap = getConfiguration();
-            HiveClient hiveClient = new HiveClient(configMap);
+            String hiveName = getHiveName();
+            HiveClient hiveClient = HiveManager.getInstance().createHiveClientWithConfig(configMap, hiveName);
 
             for (String hql : getHqls()) {
                 hiveClient.executeHQL(hql);
@@ -104,4 +107,11 @@ public class HqlExecutable extends AbstractExecutable {
         }
     }
 
+    public void setHiveName(String hiveName) {
+        setParam(HIVE_NAME, hiveName);
+    }
+    
+    private String getHiveName() {
+        return getParam(HIVE_NAME);
+    }
 }

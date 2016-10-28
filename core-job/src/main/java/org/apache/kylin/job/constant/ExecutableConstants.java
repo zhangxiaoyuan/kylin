@@ -35,7 +35,9 @@ public final class ExecutableConstants {
     public static final int DEFAULT_SCHEDULER_INTERVAL_SECONDS = 60;
 
     public static final String STEP_NAME_BUILD_DICTIONARY = "Build Dimension Dictionary";
-    public static final String STEP_NAME_CREATE_FLAT_HIVE_TABLE = "Create Intermediate Flat Hive Table";
+    public static final String STEP_NAME_CREATE_FLAT_HIVE_TABLE = "Create Intermediate Flat Hive Table in Local Hive";
+    public static final String STEP_NAME_CREATE_FLAT_HIVE_TABLE_IN_DEFAULT = "Create Intermediate Flat Hive Table in Default Hive";
+    public static final String STEP_NAME_COPY_HIVE_DATA = "Copy Intermediate Table To Local Hadoop";
     public static final String STEP_NAME_MATERIALIZE_HIVE_VIEW_IN_LOOKUP = "Materialize Hive View in Lookup Tables";
     public static final String STEP_NAME_COUNT_HIVE_TABLE = "Count Source Table";
     public static final String STEP_NAME_FACT_DISTINCT_COLUMNS = "Extract Fact Table Distinct Columns";

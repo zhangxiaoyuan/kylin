@@ -23,6 +23,7 @@ public interface ISourceAware {
     public static final int ID_HIVE = 0;
     public static final int ID_STREAMING = 1;
     public static final int ID_SPARKSQL = 5;
+    public static final int ID_EXTERNAL_HIVE = 6;
     public static final int ID_EXTERNAL = 7;
 
     int getSourceType();

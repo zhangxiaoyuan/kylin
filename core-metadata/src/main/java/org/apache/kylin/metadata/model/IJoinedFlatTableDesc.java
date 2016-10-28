@@ -37,4 +37,6 @@ public interface IJoinedFlatTableDesc {
     long getSourceOffsetEnd();
     
     TblColRef getDistributedBy();
+    // Determine hive name by data model fact table.
+    String getHiveName();
 }

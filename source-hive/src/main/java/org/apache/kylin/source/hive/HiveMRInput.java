@@ -26,6 +26,7 @@ import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hive.hcatalog.data.HCatRecord;
 import org.apache.hive.hcatalog.mapreduce.HCatInputFormat;
@@ -52,6 +53,7 @@ import org.apache.kylin.metadata.MetadataManager;
 import org.apache.kylin.metadata.model.IJoinedFlatTableDesc;
 import org.apache.kylin.metadata.model.LookupDesc;
 import org.apache.kylin.metadata.model.TableDesc;
+import org.apache.kylin.source.hive.external.ExternalHiveClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -85,13 +87,17 @@ public class HiveMRInput implements IMRInput {
 
         @Override
         public void configureJob(Job job) {
-            try {
-                HCatInputFormat.setInput(job, dbName, tableName);
-                job.setInputFormatClass(HCatInputFormat.class);
-
-                job.setMapOutputValueClass(org.apache.hive.hcatalog.data.DefaultHCatRecord.class);
-            } catch (IOException e) {
-                throw new RuntimeException(e);
+            // HiveConf config file is static variable and ensure we set correct one. 
+            synchronized(ExternalHiveClient.class) {
+                HiveConf.setHiveSiteLocation(Thread.currentThread().getContextClassLoader().getResource("hive-site.xml"));
+                try {
+                    HCatInputFormat.setInput(job, dbName, tableName);
+                    job.setInputFormatClass(HCatInputFormat.class);
+    
+                    job.setMapOutputValueClass(org.apache.hive.hcatalog.data.DefaultHCatRecord.class);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
             }
         }
 
@@ -104,9 +110,9 @@ public class HiveMRInput implements IMRInput {
 
     public static class BatchCubingInputSide implements IMRBatchCubingInputSide {
 
-        final JobEngineConfig conf;
-        final IJoinedFlatTableDesc flatDesc;
-        String hiveViewIntermediateTables = "";
+        protected final JobEngineConfig conf;
+        protected final IJoinedFlatTableDesc flatDesc;
+        protected String hiveViewIntermediateTables = "";
 
         public BatchCubingInputSide(IJoinedFlatTableDesc flatDesc) {
             this.conf = new JobEngineConfig(KylinConfig.getInstanceFromEnv());
@@ -126,7 +132,7 @@ public class HiveMRInput implements IMRInput {
                 jobFlow.addTask(createRedistributeFlatHiveTableStep(conf, flatDesc, jobFlow.getId(), cubeName));
             } else if ("2".equals(createFlatTableMethod)) {
                 // count from source table first, and then redistribute, suitable for partitioned table
-                final String rowCountOutputDir = JobBuilderSupport.getJobWorkingDir(conf, jobFlow.getId()) + "/row_count";
+                final String rowCountOutputDir = getRowCountOutputDir(conf, jobFlow.getId());
                 jobFlow.addTask(createCountHiveTableStep(conf, flatDesc, jobFlow.getId(), rowCountOutputDir));
                 jobFlow.addTask(createFlatHiveTableStep(conf, flatDesc, jobFlow.getId(), cubeName, true, rowCountOutputDir));
             } else {
@@ -139,16 +145,25 @@ public class HiveMRInput implements IMRInput {
             }
         }
 
-        public static AbstractExecutable createRedistributeFlatHiveTableStep(JobEngineConfig conf, IJoinedFlatTableDesc flatTableDesc, String jobId, String cubeName) {
+        protected String getRowCountOutputDir(JobEngineConfig conf, String jobId) {
+            return JobBuilderSupport.getJobWorkingDir(conf, jobId) + "/row_count";
+        }
+
+        protected boolean isWriteToLocalDir() {
+            return false;
+        }
+
+        public AbstractExecutable createRedistributeFlatHiveTableStep(JobEngineConfig conf, IJoinedFlatTableDesc flatTableDesc, String jobId, String cubeName) {
             StringBuilder hiveInitBuf = new StringBuilder();
             hiveInitBuf.append("USE ").append(conf.getConfig().getHiveDatabaseForIntermediateTable()).append(";\n");
             hiveInitBuf.append(JoinedFlatTable.generateHiveSetStatements(conf));
 
-            String rowCountOutputDir = JobBuilderSupport.getJobWorkingDir(conf, jobId) + "/row_count";
+            String rowCountOutputDir = getRowCountOutputDir(conf, jobId);
 
             RedistributeFlatHiveTableStep step = new RedistributeFlatHiveTableStep();
+            step.setHiveName(flatTableDesc.getHiveName());
             step.setInitStatement(hiveInitBuf.toString());
-            step.setSelectRowCountStatement(JoinedFlatTable.generateSelectRowCountStatement(flatTableDesc, rowCountOutputDir));
+            step.setSelectRowCountStatement(JoinedFlatTable.generateSelectRowCountStatement(flatTableDesc, rowCountOutputDir, isWriteToLocalDir()));
             step.setRowCountOutputDir(rowCountOutputDir);
             step.setRedistributeDataStatement(JoinedFlatTable.generateRedistributeFlatTableStatement(flatTableDesc));
             CubingExecutableUtil.setCubeName(cubeName, step.getParams());
@@ -157,13 +172,14 @@ public class HiveMRInput implements IMRInput {
         }
 
 
-        public static AbstractExecutable createCountHiveTableStep(JobEngineConfig conf, IJoinedFlatTableDesc flatTableDesc, String jobId, String rowCountOutputDir) {
+        public AbstractExecutable createCountHiveTableStep(JobEngineConfig conf, IJoinedFlatTableDesc flatTableDesc, String jobId, String rowCountOutputDir) {
             final ShellExecutable step = new ShellExecutable();
-
-            final HiveCmdBuilder hiveCmdBuilder = new HiveCmdBuilder();
+            final String hiveName = flatTableDesc.getHiveName();
+            
+            final HiveCmdBuilder hiveCmdBuilder = new HiveCmdBuilder(hiveName);
             hiveCmdBuilder.addStatement(JoinedFlatTable.generateHiveSetStatements(conf));
             hiveCmdBuilder.addStatement("set hive.exec.compress.output=false;\n");
-            hiveCmdBuilder.addStatement(JoinedFlatTable.generateCountDataStatement(flatTableDesc, rowCountOutputDir));
+            hiveCmdBuilder.addStatement(JoinedFlatTable.generateCountDataStatement(flatTableDesc, rowCountOutputDir, isWriteToLocalDir()));
 
             step.setCmd(hiveCmdBuilder.build());
             step.setName(ExecutableConstants.STEP_NAME_COUNT_HIVE_TABLE);
@@ -174,7 +190,7 @@ public class HiveMRInput implements IMRInput {
         public ShellExecutable createLookupHiveViewMaterializationStep(String jobId) {
             ShellExecutable step = new ShellExecutable();
             step.setName(ExecutableConstants.STEP_NAME_MATERIALIZE_HIVE_VIEW_IN_LOOKUP);
-            HiveCmdBuilder hiveCmdBuilder = new HiveCmdBuilder();
+            HiveCmdBuilder hiveCmdBuilder = new HiveCmdBuilder(flatDesc.getHiveName());
 
             KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
             MetadataManager metadataManager = MetadataManager.getInstance(kylinConfig);
@@ -221,6 +237,7 @@ public class HiveMRInput implements IMRInput {
             String insertDataHqls = JoinedFlatTable.generateInsertDataStatement(flatTableDesc, conf, redistribute);
 
             CreateFlatHiveTableStep step = new CreateFlatHiveTableStep();
+            step.setHiveName(flatTableDesc.getHiveName());
             step.setUseRedistribute(redistribute);
             step.setInitStatement(hiveInitBuf.toString());
             step.setRowCountOutputDir(rowCountOutputDir);
@@ -245,7 +262,7 @@ public class HiveMRInput implements IMRInput {
             return new HiveTableInputFormat(getIntermediateTableIdentity());
         }
 
-        private String getIntermediateTableIdentity() {
+        protected String getIntermediateTableIdentity() {
             return conf.getConfig().getHiveDatabaseForIntermediateTable() + "." + flatDesc.getTableName();
         }
     }
@@ -254,7 +271,8 @@ public class HiveMRInput implements IMRInput {
         private final BufferedLogger stepLogger = new BufferedLogger(logger);
 
         private void computeRowCount(CliCommandExecutor cmdExecutor) throws IOException {
-            final HiveCmdBuilder hiveCmdBuilder = new HiveCmdBuilder();
+            final String hiveName = getHiveName();
+            final HiveCmdBuilder hiveCmdBuilder = new HiveCmdBuilder(hiveName);
             hiveCmdBuilder.addStatement(getInitStatement());
             hiveCmdBuilder.addStatement("set hive.exec.compress.output=false;\n");
             hiveCmdBuilder.addStatement(getSelectRowCountStatement());
@@ -282,7 +300,8 @@ public class HiveMRInput implements IMRInput {
         }
 
         private void redistributeTable(KylinConfig config, int numReducers) throws IOException {
-            final HiveCmdBuilder hiveCmdBuilder = new HiveCmdBuilder();
+            final String hiveName = getHiveName();
+            final HiveCmdBuilder hiveCmdBuilder = new HiveCmdBuilder(hiveName);
             hiveCmdBuilder.addStatement(getInitStatement());
             hiveCmdBuilder.addStatement("set mapreduce.job.reduces=" + numReducers + ";\n");
             hiveCmdBuilder.addStatement("set hive.merge.mapredfiles=false;\n");
@@ -369,6 +388,14 @@ public class HiveMRInput implements IMRInput {
         public String getRowCountOutputDir() {
             return getParam("rowCountOutputDir");
         }
+        
+        public void setHiveName(String hiveName) {
+            setParam("hiveName", hiveName);
+        }
+        
+        public String getHiveName() {
+            return getParam("hiveName");
+        }
     }
 
     public static class GarbageCollectionStep extends AbstractExecutable {
@@ -390,7 +417,7 @@ public class HiveMRInput implements IMRInput {
             return new ExecuteResult(ExecuteResult.State.SUCCEED, output.toString());
         }
 
-        private String cleanUpIntermediateFlatTable(KylinConfig config) throws IOException {
+        protected String cleanUpIntermediateFlatTable(KylinConfig config) throws IOException {
             StringBuffer output = new StringBuffer();
             final String hiveTable = this.getIntermediateTableIdentity();
             if (config.isHiveKeepFlatTable() == false && StringUtils.isNotEmpty(hiveTable)) {
@@ -441,7 +468,7 @@ public class HiveMRInput implements IMRInput {
             setParam("oldHiveTable", tableIdentity);
         }
 
-        private String getIntermediateTableIdentity() {
+        protected String getIntermediateTableIdentity() {
             return getParam("oldHiveTable");
         }
 
@@ -449,7 +476,7 @@ public class HiveMRInput implements IMRInput {
             setParam("externalDataPath", externalDataPath);
         }
 
-        private String getExternalDataPath() {
+        protected String getExternalDataPath() {
             return getParam("externalDataPath");
         }
 
@@ -457,8 +484,16 @@ public class HiveMRInput implements IMRInput {
             setParam("oldHiveViewIntermediateTables", tableIdentities);
         }
 
-        private String getHiveViewIntermediateTableIdentities() {
+        protected String getHiveViewIntermediateTableIdentities() {
             return getParam("oldHiveViewIntermediateTables");
+        }
+        
+        public String getCmd() {
+            StringBuffer buf = new StringBuffer();
+            buf.append(" -").append("externalDataPath").append(" ").append(getIntermediateTableIdentity()).append(" -").append("externalDataPath").append(" ").
+                append(getExternalDataPath()).append(" -").append("oldHiveViewIntermediateTables").append(" ").append(getHiveViewIntermediateTableIdentities());
+            
+            return buf.toString();
         }
     }
 

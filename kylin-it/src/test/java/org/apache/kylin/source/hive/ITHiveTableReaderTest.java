@@ -34,7 +34,7 @@ public class ITHiveTableReaderTest extends HBaseMetadataTestCase {
 
     @Test
     public void test() throws IOException {
-        HiveTableReader reader = new HiveTableReader("default", "test_kylin_fact");
+        HiveTableReader reader = new HiveTableReader("default", "test_kylin_fact", null);
         int rowNumber = 0;
         while (reader.next()) {
             String[] row = reader.getRow();

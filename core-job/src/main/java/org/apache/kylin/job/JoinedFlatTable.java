@@ -141,12 +141,13 @@ public class JoinedFlatTable {
         return sql.toString();
     }
 
-    public static String generateCountDataStatement(IJoinedFlatTableDesc flatDesc, final String outputDir) {
+    public static String generateCountDataStatement(IJoinedFlatTableDesc flatDesc, final String outputDir, boolean local) {
         final Map<String, String> tableAliasMap = buildTableAliasMap(flatDesc.getDataModel());
         final StringBuilder sql = new StringBuilder();
+        String localStr = local ? "LOCAL" : "";
         final String factTbl = flatDesc.getDataModel().getFactTable();
         sql.append("dfs -mkdir -p " + outputDir + ";\n");
-        sql.append("INSERT OVERWRITE DIRECTORY '" + outputDir + "' SELECT count(*) FROM " + factTbl + " " + tableAliasMap.get(factTbl) + "\n");
+        sql.append("INSERT OVERWRITE " + localStr + " DIRECTORY '" + outputDir + "' SELECT count(*) FROM " + factTbl + " " + tableAliasMap.get(factTbl) + "\n");
         appendWhereStatement(flatDesc, sql, tableAliasMap);
         return sql.toString();
     }
@@ -285,10 +286,11 @@ public class JoinedFlatTable {
         return hiveDataType.toLowerCase();
     }
 
-    public static String generateSelectRowCountStatement(IJoinedFlatTableDesc intermediateTableDesc, String outputDir) {
+    public static String generateSelectRowCountStatement(IJoinedFlatTableDesc intermediateTableDesc, String outputDir, boolean local) {
         StringBuilder sql = new StringBuilder();
+        String localStr = local ? "LOCAL" : "";
         sql.append("set hive.exec.compress.output=false;\n");
-        sql.append("INSERT OVERWRITE DIRECTORY '" + outputDir + "' SELECT count(*) FROM " + intermediateTableDesc.getTableName() + ";\n");
+        sql.append("INSERT OVERWRITE " + localStr + " DIRECTORY '" + outputDir + "' SELECT count(*) FROM " + intermediateTableDesc.getTableName() + ";\n");
         return sql.toString();
     }
 

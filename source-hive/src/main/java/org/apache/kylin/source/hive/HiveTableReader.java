@@ -48,6 +48,7 @@ public class HiveTableReader implements TableReader {
     private HCatRecord currentHCatRecord;
     private int numberOfSplits = 0;
     private Map<String, String> partitionKV = null;
+    private HiveConf hiveConf = null;
 
     /**
      * Constructor for reading whole hive table
@@ -55,8 +56,8 @@ public class HiveTableReader implements TableReader {
      * @param tableName
      * @throws IOException
      */
-    public HiveTableReader(String dbName, String tableName) throws IOException {
-        this(dbName, tableName, null);
+    public HiveTableReader(String dbName, String tableName, HiveConf hiveConf) throws IOException {
+        this(dbName, tableName, null, hiveConf);
     }
 
     /**
@@ -66,16 +67,17 @@ public class HiveTableReader implements TableReader {
      * @param partitionKV key-value pairs condition on the partition
      * @throws IOException
      */
-    public HiveTableReader(String dbName, String tableName, Map<String, String> partitionKV) throws IOException {
+    public HiveTableReader(String dbName, String tableName, Map<String, String> partitionKV, HiveConf hiveConf) throws IOException {
         this.dbName = dbName;
         this.tableName = tableName;
         this.partitionKV = partitionKV;
+        this.hiveConf = hiveConf;
         initialize();
     }
 
     private void initialize() throws IOException {
         try {
-            this.readCntxt = getHiveReaderContext(dbName, tableName, partitionKV);
+            this.readCntxt = getHiveReaderContext(dbName, tableName, partitionKV, this.hiveConf);
         } catch (Exception e) {
             e.printStackTrace();
             throw new IOException(e);
@@ -146,8 +148,10 @@ public class HiveTableReader implements TableReader {
         return "hive table reader for: " + dbName + "." + tableName;
     }
 
-    private static ReaderContext getHiveReaderContext(String database, String table, Map<String, String> partitionKV) throws Exception {
-        HiveConf hiveConf = new HiveConf(HiveTableReader.class);
+    private static ReaderContext getHiveReaderContext(String database, String table, Map<String, String> partitionKV, HiveConf hiveConf) 
+            throws Exception {
+        if(hiveConf == null)
+            hiveConf = new HiveConf(HiveTableReader.class);
         Iterator<Entry<String, String>> itr = hiveConf.iterator();
         Map<String, String> map = new HashMap<String, String>();
         while (itr.hasNext()) {

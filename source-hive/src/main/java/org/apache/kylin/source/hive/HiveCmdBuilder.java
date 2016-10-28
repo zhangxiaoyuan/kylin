@@ -27,6 +27,7 @@ import java.util.ArrayList;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.kylin.common.KylinConfig;
+import org.apache.kylin.source.hive.external.HiveManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,10 +43,16 @@ public class HiveCmdBuilder {
     private HiveClientMode clientMode;
     private KylinConfig kylinConfig;
     final private ArrayList<String> statements = Lists.newArrayList();
+    protected String hiveName;
 
     public HiveCmdBuilder() {
+        this(null);
+    }
+    
+    public HiveCmdBuilder(String hive) {
         kylinConfig = KylinConfig.getInstanceFromEnv();
         clientMode = HiveClientMode.valueOf(kylinConfig.getHiveClientMode().toUpperCase());
+        this.hiveName = hive;
     }
 
     public String build() {
@@ -53,13 +60,17 @@ public class HiveCmdBuilder {
 
         switch (clientMode) {
         case CLI:
-            buf.append("hive -e \"");
+            String hiveCommand = HiveManager.getInstance().getHiveCommand(this.hiveName);
+            buf.append(hiveCommand + " -e \"");
             for (String statement : statements) {
                 buf.append(statement).append("\n");
             }
             buf.append("\"");
             break;
         case BEELINE:
+            if(this.hiveName != null) {
+                throw new IllegalArgumentException("Can not use external hive with beeline mode to build cube currently.");
+            }
             BufferedWriter bw = null;
             try {
                 File tmpHql = File.createTempFile("beeline_", ".hql");

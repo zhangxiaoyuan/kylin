@@ -137,4 +137,8 @@ public class CubeJoinedFlatTableEnrich implements IJoinedFlatTableDesc {
         return flatDesc.getDistributedBy();
     }
 
+    @Override
+    public String getHiveName() {
+        return this.getDataModel().getFactTableDesc().getHive();
+    }
 }

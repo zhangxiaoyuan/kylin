@@ -161,5 +161,10 @@ public class CubeJoinedFlatTableDesc implements IJoinedFlatTableDesc {
     public TblColRef getDistributedBy() {
         return cubeDesc.getDistributedByColumn();
     }
+    
+    @Override
+    public String getHiveName() {
+        return this.getDataModel().getFactTableDesc().getHive();
+    }
 
 }

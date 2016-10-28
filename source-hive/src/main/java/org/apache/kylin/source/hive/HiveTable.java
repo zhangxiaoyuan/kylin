@@ -25,6 +25,7 @@ import org.apache.kylin.common.util.Pair;
 import org.apache.kylin.engine.mr.DFSFileTable;
 import org.apache.kylin.metadata.model.TableDesc;
 import org.apache.kylin.source.ReadableTable;
+import org.apache.kylin.source.hive.external.HiveManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -36,17 +37,19 @@ public class HiveTable implements ReadableTable {
 
     final private String database;
     final private String hiveTable;
+    final private String hiveName;
 
     private HiveClient hiveClient;
 
     public HiveTable(TableDesc tableDesc) {
+        this.hiveName = tableDesc.getHive();
         this.database = tableDesc.getDatabase();
         this.hiveTable = tableDesc.getName();
     }
 
     @Override
     public TableReader getReader() throws IOException {
-        return new HiveTableReader(database, hiveTable);
+        return new HiveTableReader(database, hiveTable, getHiveClient().getHiveConf());
     }
 
     @Override
@@ -86,7 +89,7 @@ public class HiveTable implements ReadableTable {
     public HiveClient getHiveClient() {
 
         if (hiveClient == null) {
-            hiveClient = new HiveClient();
+            hiveClient = HiveManager.getInstance().createHiveClient(this.hiveName);
         }
         return hiveClient;
     }

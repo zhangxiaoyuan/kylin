@@ -238,7 +238,7 @@ public class TableDesc extends RootPersistentEntity implements ISourceAware {
 
     @Override
     public int getSourceType() {
-        return sourceType;
+        return hive == null ? ISourceAware.ID_HIVE : ISourceAware.ID_EXTERNAL_HIVE;
     }
 
     public void setSourceType(int sourceType) {
