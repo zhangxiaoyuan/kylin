@@ -33,6 +33,8 @@ import org.apache.kylin.metadata.MetadataConstants;
 import org.apache.kylin.metadata.MetadataManager;
 import org.apache.kylin.metadata.model.ColumnDesc;
 import org.apache.kylin.metadata.model.TableDesc;
+import org.apache.kylin.metadata.project.ProjectManager;
+import org.apache.kylin.source.hive.external.HiveManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -55,7 +57,7 @@ public class HiveSourceTableLoader {
     public static final String TABLE_FOLDER_NAME = "table";
     public static final String TABLE_EXD_FOLDER_NAME = "table_exd";
 
-    public static Set<String> reloadHiveTables(String[] hiveTables, KylinConfig config) throws IOException {
+    public static Set<String> reloadHiveTables(String[] hiveTables, String project, KylinConfig config) throws IOException {
 
         Map<String, Set<String>> db2tables = Maps.newHashMap();
         for (String table : hiveTables) {
@@ -71,7 +73,7 @@ public class HiveSourceTableLoader {
         // extract from hive
         Set<String> loadedTables = Sets.newHashSet();
         for (String database : db2tables.keySet()) {
-            List<String> loaded = extractHiveTables(database, db2tables.get(database), config);
+            List<String> loaded = extractHiveTables(database, db2tables.get(database), project, config);
             loadedTables.addAll(loaded);
         }
 
@@ -84,13 +86,23 @@ public class HiveSourceTableLoader {
         metaMgr.removeTableExd(hiveTable);
     }
 
-    private static List<String> extractHiveTables(String database, Set<String> tables, KylinConfig config) throws IOException {
+    private static List<String> extractHiveTables(String database, Set<String> tables, String project, KylinConfig config) throws IOException {
 
         List<String> loadedTables = Lists.newArrayList();
         MetadataManager metaMgr = MetadataManager.getInstance(KylinConfig.getInstanceFromEnv());
+        ProjectManager projectMgr = ProjectManager.getInstance(KylinConfig.getInstanceFromEnv());
+        String hiveName = projectMgr.getProject(project).getHive();
         for (String tableName : tables) {
             Table table = null;
-            HiveClient hiveClient = new HiveClient();
+            HiveClient hiveClient = HiveManager.getInstance().createHiveClient(hiveName);
+            String tableIdentity = database + "." + tableName;
+            TableDesc tableDesc = metaMgr.getTableDesc(tableIdentity);
+            if(tableDesc != null && !HiveManager.isSameHiveSource(tableDesc.getHive(), hiveName)) {
+                throw new IllegalArgumentException("Table " + tableIdentity + " that in hive " + 
+                        hiveName + " has been loaded in hive " + tableDesc.getHive() + 
+                        ", please rename the table or unload the old one.");
+            }
+
             List<FieldSchema> partitionFields = null;
             List<FieldSchema> fields = null;
             try {
@@ -108,13 +120,13 @@ public class HiveSourceTableLoader {
 
             long tableSize = hiveClient.getFileSizeForTable(table);
             long tableFileNum = hiveClient.getFileNumberForTable(table);
-            TableDesc tableDesc = metaMgr.getTableDesc(database + "." + tableName);
             if (tableDesc == null) {
                 tableDesc = new TableDesc();
                 tableDesc.setDatabase(database.toUpperCase());
                 tableDesc.setName(tableName.toUpperCase());
                 tableDesc.setUuid(UUID.randomUUID().toString());
                 tableDesc.setLastModified(0);
+                tableDesc.setHive(hiveName);
             }
             if (table.getTableType() != null) {
                 tableDesc.setTableType(table.getTableType());

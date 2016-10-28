@@ -152,6 +152,15 @@ public class ProjectManager {
 
         return currentProject;
     }
+    
+    public ProjectInstance createProject(String projectName, String owner, String description, String hiveName) throws IOException {
+        logger.info("Creating project " + projectName + ", hive name " + hiveName);
+        ProjectInstance currentProject = this.createProject(projectName, owner, description);
+        currentProject.setHive(hiveName);
+        updateProject(currentProject);
+        
+        return currentProject;
+    }
 
     public ProjectInstance dropProject(String projectName) throws IOException {
         if (projectName == null)
@@ -183,9 +192,9 @@ public class ProjectManager {
     }
 
     //update project itself
-    public ProjectInstance updateProject(ProjectInstance project, String newName, String newDesc) throws IOException {
+    public ProjectInstance updateProject(ProjectInstance project, String newName, String newDesc, String hiveName) throws IOException {
         if (!project.getName().equals(newName)) {
-            ProjectInstance newProject = this.createProject(newName, project.getOwner(), newDesc);
+            ProjectInstance newProject = this.createProject(newName, project.getOwner(), newDesc, hiveName);
 
             newProject.setCreateTimeUTC(project.getCreateTimeUTC());
             newProject.recordUpdateTime(System.currentTimeMillis());
@@ -200,8 +209,13 @@ public class ProjectManager {
             return newProject;
         } else {
             project.setName(newName);
-            project.setDescription(newDesc);
-
+            if(newDesc != null) {
+                project.setDescription(newDesc);
+            }
+            if(hiveName != null) {
+                project.setHive(hiveName);
+            }
+            
             if (project.getUuid() == null)
                 project.updateRandomUuid();
 

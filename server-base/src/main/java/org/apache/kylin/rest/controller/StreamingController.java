@@ -29,6 +29,7 @@ import org.apache.kylin.engine.mr.HadoopUtil;
 import org.apache.kylin.engine.streaming.StreamingConfig;
 import org.apache.kylin.metadata.MetadataManager;
 import org.apache.kylin.metadata.model.TableDesc;
+import org.apache.kylin.metadata.project.ProjectManager;
 import org.apache.kylin.rest.exception.BadRequestException;
 import org.apache.kylin.rest.exception.ForbiddenException;
 import org.apache.kylin.rest.exception.InternalErrorException;
@@ -103,6 +104,8 @@ public class StreamingController extends BasicController {
     public StreamingRequest saveStreamingConfig(@RequestBody StreamingRequest streamingRequest) {
 
         String project = streamingRequest.getProject();
+        ProjectManager projectMgr = ProjectManager.getInstance(KylinConfig.getInstanceFromEnv());
+        String hive = projectMgr.getProject(project).getHive();
         TableDesc tableDesc = deserializeTableDesc(streamingRequest);
         StreamingConfig streamingConfig = deserializeSchemalDesc(streamingRequest);
         KafkaConfig kafkaConfig = deserializeKafkaSchemalDesc(streamingRequest);
@@ -110,6 +113,7 @@ public class StreamingController extends BasicController {
 
         try {
             tableDesc.setUuid(UUID.randomUUID().toString());
+            tableDesc.setHive(hive);
             MetadataManager metaMgr = MetadataManager.getInstance(KylinConfig.getInstanceFromEnv());
             metaMgr.saveSourceTable(tableDesc);
             cubeMgmtService.syncTableToProject(new String[] { tableDesc.getIdentity() }, project);

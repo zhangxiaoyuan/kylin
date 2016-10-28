@@ -53,13 +53,14 @@ public class ProjectService extends BasicService {
     public ProjectInstance createProject(CreateProjectRequest projectRequest) throws IOException {
         String projectName = projectRequest.getName();
         String description = projectRequest.getDescription();
+        String hiveName = projectRequest.getHive();
         ProjectInstance currentProject = getProjectManager().getProject(projectName);
 
         if (currentProject != null) {
             throw new InternalErrorException("The project named " + projectName + " already exists");
         }
         String owner = SecurityContextHolder.getContext().getAuthentication().getName();
-        ProjectInstance createdProject = getProjectManager().createProject(projectName, owner, description);
+        ProjectInstance createdProject = getProjectManager().createProject(projectName, owner, description, hiveName);
         accessService.init(createdProject, AclPermission.ADMINISTRATION);
         logger.debug("New project created.");
 
@@ -71,12 +72,13 @@ public class ProjectService extends BasicService {
         String formerProjectName = projectRequest.getFormerProjectName();
         String newProjectName = projectRequest.getNewProjectName();
         String newDescription = projectRequest.getNewDescription();
+        String newHiveName = projectRequest.getNewHiveName();
 
         if (currentProject == null) {
             throw new InternalErrorException("The project named " + formerProjectName + " does not exists");
         }
 
-        ProjectInstance updatedProject = getProjectManager().updateProject(currentProject, newProjectName, newDescription);
+        ProjectInstance updatedProject = getProjectManager().updateProject(currentProject, newProjectName, newDescription, newHiveName);
 
         logger.debug("Project updated.");
 

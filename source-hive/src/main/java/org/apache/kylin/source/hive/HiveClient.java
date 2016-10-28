@@ -104,7 +104,7 @@ public class HiveClient {
             executeHQL(sql);
     }
 
-    private HiveMetaStoreClient getMetaStoreClient() throws Exception {
+    protected HiveMetaStoreClient getMetaStoreClient() throws Exception {
         if (metaStoreClient == null) {
             metaStoreClient = new HiveMetaStoreClient(hiveConf);
         }

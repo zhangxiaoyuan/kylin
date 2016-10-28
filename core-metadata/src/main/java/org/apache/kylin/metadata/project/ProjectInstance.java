@@ -49,6 +49,9 @@ public class ProjectInstance extends RootPersistentEntity {
 
     @JsonProperty("name")
     private String name;
+    
+    @JsonProperty("hive")
+    private String hive;
 
     @JsonProperty("tables")
     private Set<String> tables = new TreeSet<String>();
@@ -152,6 +155,14 @@ public class ProjectInstance extends RootPersistentEntity {
 
     public void setName(String name) {
         this.name = name;
+    }
+    
+    public String getHive() {
+        return hive;
+    }
+
+    public void setHive(String hive) {
+        this.hive = hive;
     }
 
     public boolean containsRealization(final RealizationType type, final String realization) {

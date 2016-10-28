@@ -365,6 +365,10 @@ abstract public class KylinConfigBase implements Serializable {
     public String getCliWorkingDir() {
         return getOptional("kylin.job.remote.cli.working.dir");
     }
+    
+    public String getExternalHiveRootDirectory() {
+        return getOptional("kylin.external.hive.root.directory", null);
+    }
 
     public boolean isEmptySegmentAllowed() {
         return Boolean.parseBoolean(getOptional("kylin.job.allow.empty.segment", "true"));

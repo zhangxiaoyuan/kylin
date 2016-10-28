@@ -45,6 +45,8 @@ public class TableDesc extends RootPersistentEntity implements ISourceAware {
     private int sourceType = ISourceAware.ID_HIVE;
     @JsonProperty("table_type")
     private String tableType;
+    @JsonProperty("hive")
+    private String hive;
 
     private static final String materializedTableNamePrefix = "kylin_intermediate_";
 
@@ -60,6 +62,7 @@ public class TableDesc extends RootPersistentEntity implements ISourceAware {
         this.columns = other.getColumns();
         this.database.setName(other.getDatabase());
         this.tableType = other.getTableType();
+        this.hive = other.getHive();
     }
 
     public ColumnDesc findColumnByName(String name) {
@@ -250,4 +253,12 @@ public class TableDesc extends RootPersistentEntity implements ISourceAware {
         this.tableType = tableType;
     }
 
+    public String getHive() {
+        return hive;
+    }
+
+    public void setHive(String hive) {
+        this.hive = hive;
+    }
+    
 }

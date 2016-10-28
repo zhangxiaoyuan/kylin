@@ -48,6 +48,7 @@ import org.apache.kylin.metadata.realization.RealizationType;
 import org.apache.kylin.query.enumerator.OLAPQuery;
 import org.apache.kylin.query.schema.OLAPSchemaFactory;
 import org.apache.kylin.rest.controller.QueryController;
+import org.apache.kylin.source.hive.external.HiveManager;
 import org.apache.kylin.source.kafka.KafkaConfigManager;
 import org.apache.kylin.storage.hbase.HBaseConnection;
 import org.apache.kylin.storage.hybrid.HybridManager;
@@ -210,7 +211,8 @@ public class CacheService extends BasicService {
                 KafkaConfigManager.clearCache();
                 StreamingManager.clearCache();
                 HBaseConnection.clearConnCache();
-
+                HiveManager.clearCache();
+                
                 cleanAllDataCache();
                 removeAllOLAPDataSources();
                 break;

@@ -56,6 +56,7 @@ import org.apache.kylin.rest.service.CubeService;
 import org.apache.kylin.rest.service.JobService;
 import org.apache.kylin.rest.service.KafkaConfigService;
 import org.apache.kylin.rest.service.StreamingService;
+import org.apache.kylin.source.hive.external.HiveManager;
 import org.apache.kylin.source.kafka.config.KafkaConfig;
 import org.apache.kylin.storage.hbase.cube.v1.coprocessor.observer.ObserverEnabler;
 import org.slf4j.Logger;
@@ -343,6 +344,9 @@ public class CubeController extends BasicController {
         String newCubeName = cubeRequest.getCubeName();
         String project = cubeRequest.getProject();
 
+        if(!this.isBasedSameSource(cubeName, project)) {
+            throw new InternalErrorException("Can not move cube to project with different hive source!");
+        }
         CubeInstance cube = cubeService.getCubeManager().getCube(cubeName);
         if (cube == null) {
             throw new InternalErrorException("Cannot find cube " + cubeName);
@@ -363,6 +367,19 @@ public class CubeController extends BasicController {
 
         return newCube;
 
+    }
+    
+    private boolean isBasedSameSource(String cubeName, String projectName) {
+        CubeInstance cube = cubeService.getCubeManager().getCube(cubeName);
+        if(cube == null)
+            return true;
+        
+        ProjectInstance project = cubeService.getProjectManager().getProject(projectName);
+        if(project == null) {
+            return true;
+        }
+        ProjectInstance cubeProject = cubeService.getProjectByCube(cubeName);
+        return HiveManager.isSameHiveSource(project.getHive(), cubeProject.getHive());
     }
 
     @RequestMapping(value = "/{cubeName}/enable", method = { RequestMethod.PUT })

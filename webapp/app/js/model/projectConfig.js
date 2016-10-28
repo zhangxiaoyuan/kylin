@@ -20,6 +20,7 @@ KylinApp.constant('projectConfig', {
   theaditems: [
     {attr: 'name', name: 'Name'},
     {attr: 'owner', name: 'Owner'},
+    {attr: 'hive', name: 'Hive Name'},
     {attr: 'description', name: 'Description'},
     {attr: 'create_time', name: 'Create Time'}
   ]

@@ -33,6 +33,7 @@ import org.apache.kylin.rest.request.UpdateProjectRequest;
 import org.apache.kylin.rest.service.AccessService;
 import org.apache.kylin.rest.service.CubeService;
 import org.apache.kylin.rest.service.ProjectService;
+import org.apache.kylin.source.hive.external.HiveManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -199,7 +200,9 @@ public class ProjectController extends BasicController {
         if (StringUtils.isEmpty(projectRequest.getName())) {
             throw new InternalErrorException("A project name must be given to create a project");
         }
-
+        
+        String hiveName = projectRequest.getHive();
+        checkHiveIsValid(hiveName);
         ProjectInstance createdProj = null;
         try {
             createdProj = projectService.createProject(projectRequest);
@@ -217,7 +220,7 @@ public class ProjectController extends BasicController {
         if (StringUtils.isEmpty(projectRequest.getFormerProjectName())) {
             throw new InternalErrorException("A project name must be given to update a project");
         }
-
+        checkHiveIsValid(projectRequest.getNewHiveName());
         ProjectInstance updatedProj = null;
         try {
             ProjectInstance currentProject = projectService.getProjectManager().getProject(projectRequest.getFormerProjectName());
@@ -253,5 +256,26 @@ public class ProjectController extends BasicController {
 
     public void setCubeService(CubeService cubeService) {
         this.cubeService = cubeService;
+    }
+    
+    /**
+     * Check input hive name is valid
+     * @param hiveName
+     */
+    private void checkHiveIsValid(String hiveName) {
+        try {
+            if(HiveManager.getInstance().isSupportExternalHives()) {
+                HiveManager.getInstance().getHiveCommand(hiveName);
+                HiveManager.getInstance().getHiveConfigFile(hiveName);
+                return;
+            }
+        } catch (Exception e) {
+            logger.error("Can not find hive " + hiveName + ", support hives : " + 
+                    HiveManager.getInstance().getExternalHiveName());
+            throw new InternalErrorException("Can not find hive " + hiveName + " by current external hives configuration");
+        }
+        if(hiveName != null) {
+            throw new InternalErrorException(HiveManager.NOT_SUPPORT_ERROR_MESSAGE);
+        }
     }
 }

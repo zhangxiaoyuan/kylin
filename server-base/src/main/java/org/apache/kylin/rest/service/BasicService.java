@@ -26,6 +26,7 @@ import java.util.Set;
 
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.cube.CubeDescManager;
+import org.apache.kylin.cube.CubeInstance;
 import org.apache.kylin.cube.CubeManager;
 import org.apache.kylin.engine.mr.CubingJob;
 import org.apache.kylin.engine.mr.steps.CubingExecutableUtil;
@@ -143,7 +144,18 @@ public abstract class BasicService {
         })));
         return results;
     }
-
+    
+    public ProjectInstance getProjectByCube(String cubeName) {
+        CubeInstance cube = getCubeManager().getCube(cubeName);
+        List<ProjectInstance> projList = this.getProjectManager().findProjects(cube.getType(), cube.getName());
+        if (projList == null || projList.size() == 0) {
+            throw new RuntimeException("Cannot find the project containing the cube " + cube.getName());
+        } else if (projList.size() >= 2) {
+            throw new RuntimeException("Find more than one project containing the cube " + cube.getName() + ". It does't meet the uniqueness requirement");
+        }
+        return projList.get(0);
+    }
+    
     protected List<CubingJob> listAllCubingJobs(final String cubeName, final String projectName, final Set<ExecutableState> statusList) {
         return listAllCubingJobs(cubeName, projectName, statusList, getExecutableManager().getAllOutputs());
     }

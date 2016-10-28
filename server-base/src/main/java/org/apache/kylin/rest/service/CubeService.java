@@ -482,7 +482,11 @@ public class CubeService extends BasicService {
 
         String outPath = HiveColumnCardinalityJob.OUTPUT_PATH + "/" + tableName;
         String param = "-table " + tableName + " -output " + outPath;
-
+        if(table.getHive() != null) {
+            logger.warn("Can not calculate cardinality for tables which loaded from external hive source !");
+            return;
+        }
+        
         MapReduceExecutable step1 = new MapReduceExecutable();
 
         step1.setMapReduceJobClass(HiveColumnCardinalityJob.class);
@@ -561,8 +565,8 @@ public class CubeService extends BasicService {
     }
 
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_MODELER + " or " + Constant.ACCESS_HAS_ROLE_ADMIN)
-    public String[] reloadHiveTable(String tables) throws IOException {
-        Set<String> loaded = HiveSourceTableLoader.reloadHiveTables(tables.split(","), getConfig());
+    public String[] reloadHiveTable(String tables, String project) throws IOException {
+        Set<String> loaded = HiveSourceTableLoader.reloadHiveTables(tables.split(","), project, getConfig());
         return (String[]) loaded.toArray(new String[loaded.size()]);
     }
 

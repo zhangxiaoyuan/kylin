@@ -22,6 +22,7 @@ package org.apache.kylin.rest.request;
  */
 public class CreateProjectRequest {
     private String name;
+    private String hive;
     private String description;
 
     public CreateProjectRequest() {
@@ -41,6 +42,14 @@ public class CreateProjectRequest {
 
     public void setDescription(String description) {
         this.description = description;
+    }
+
+    public String getHive() {
+        return hive;
+    }
+
+    public void setHive(String hive) {
+        this.hive = hive;
     }
 
 }

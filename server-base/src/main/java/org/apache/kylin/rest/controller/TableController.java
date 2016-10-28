@@ -37,6 +37,7 @@ import org.apache.kylin.metadata.MetadataConstants;
 import org.apache.kylin.metadata.MetadataManager;
 import org.apache.kylin.metadata.model.ColumnDesc;
 import org.apache.kylin.metadata.model.TableDesc;
+import org.apache.kylin.metadata.project.ProjectManager;
 import org.apache.kylin.rest.exception.InternalErrorException;
 import org.apache.kylin.rest.request.CardinalityRequest;
 import org.apache.kylin.rest.request.HiveTableRequest;
@@ -48,6 +49,7 @@ import org.apache.kylin.rest.service.ModelService;
 import org.apache.kylin.rest.service.ProjectService;
 import org.apache.kylin.rest.service.StreamingService;
 import org.apache.kylin.source.hive.HiveClient;
+import org.apache.kylin.source.hive.external.HiveManager;
 import org.apache.kylin.source.kafka.config.KafkaConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -145,7 +147,7 @@ public class TableController extends BasicController {
     @ResponseBody
     public Map<String, String[]> loadHiveTable(@PathVariable String tables, @PathVariable String project, @RequestBody HiveTableRequest request) throws IOException {
         String submitter = SecurityContextHolder.getContext().getAuthentication().getName();
-        String[] loaded = cubeMgmtService.reloadHiveTable(tables);
+        String[] loaded = cubeMgmtService.reloadHiveTable(tables, project);
         if (request.isCalculate()) {
             cubeMgmtService.calculateCardinalityIfNotPresent(loaded, submitter);
         }
@@ -233,8 +235,11 @@ public class TableController extends BasicController {
     public Map<String, String> addStreamingTable(@RequestBody StreamingRequest request) throws IOException {
         Map<String, String> result = new HashMap<String, String>();
         String project = request.getProject();
+        String hiveName = getHiveNameByProject(project);
+        
         TableDesc desc = JsonUtil.readValue(request.getTableData(), TableDesc.class);
         desc.setUuid(UUID.randomUUID().toString());
+        desc.setHive(hiveName);
         MetadataManager metaMgr = MetadataManager.getInstance(KylinConfig.getInstanceFromEnv());
         metaMgr.saveSourceTable(desc);
         cubeMgmtService.syncTableToProject(new String[] { desc.getName() }, project);
@@ -311,11 +316,13 @@ public class TableController extends BasicController {
      */
     @RequestMapping(value = "/hive", method = { RequestMethod.GET })
     @ResponseBody
-    private static List<String> showHiveDatabases() throws IOException {
-        HiveClient hiveClient = new HiveClient();
+    private static List<String> showHiveDatabases(@RequestParam(value = "project", required = true) String project) 
+            throws IOException {
         List<String> results = null;
 
         try {
+            String hiveName = getHiveNameByProject(project);
+            HiveClient hiveClient = HiveManager.getInstance().createHiveClient(hiveName);
             results = hiveClient.getHiveDbNames();
         } catch (Exception e) {
             e.printStackTrace();
@@ -332,17 +339,24 @@ public class TableController extends BasicController {
      */
     @RequestMapping(value = "/hive/{database}", method = { RequestMethod.GET })
     @ResponseBody
-    private static List<String> showHiveTables(@PathVariable String database) throws IOException {
-        HiveClient hiveClient = new HiveClient();
+    private static List<String> showHiveTables(@RequestParam(value = "project", required = true) String project, 
+            @PathVariable String database) throws IOException {
         List<String> results = null;
 
         try {
+            String hiveName = getHiveNameByProject(project);
+            HiveClient hiveClient = HiveManager.getInstance().createHiveClient(hiveName);
             results = hiveClient.getHiveTableNames(database);
         } catch (Exception e) {
             e.printStackTrace();
             throw new IOException(e);
         }
         return results;
+    }
+    
+    private static String getHiveNameByProject(String project) {
+        ProjectManager projectMgr = ProjectManager.getInstance(KylinConfig.getInstanceFromEnv());
+        return projectMgr.getProject(project).getHive();
     }
 
     public void setCubeService(CubeService cubeService) {

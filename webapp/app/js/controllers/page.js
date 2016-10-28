@@ -215,6 +215,7 @@ var projCtrl = function ($scope, $location, $modalInstance, ProjectService, Mess
       var requestBody = {
         formerProjectName: $scope.state.oldProjName,
         newProjectName: $scope.proj.name,
+        newHiveName: $scope.proj.hive,
         newDescription: $scope.proj.description
       };
       ProjectService.update({}, requestBody, function (newProj) {
