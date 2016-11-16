@@ -61,6 +61,9 @@ abstract public class KylinConfigBase implements Serializable {
         return kylinHome;
     }
 
+    // backward compatibility check happens when properties is loaded or updated
+    static BackwardCompatibilityConfig BCC = new BackwardCompatibilityConfig();
+
     // ============================================================================
 
     private volatile Properties properties = new Properties();
@@ -70,7 +73,7 @@ abstract public class KylinConfigBase implements Serializable {
     }
 
     public KylinConfigBase(Properties props) {
-        this.properties = props;
+        this.properties = BCC.check(props);
     }
 
     final protected String getOptional(String prop) {
@@ -128,11 +131,11 @@ abstract public class KylinConfigBase implements Serializable {
      */
     final public void setProperty(String key, String value) {
         logger.info("Kylin Config was updated with " + key + " : " + value);
-        properties.setProperty(key, value);
+        properties.setProperty(BCC.check(key), value);
     }
 
     final protected void reloadKylinConfig(Properties properties) {
-        this.properties = properties;
+        this.properties = BCC.check(properties);
     }
 
     // ============================================================================
@@ -374,6 +377,11 @@ abstract public class KylinConfigBase implements Serializable {
         return Boolean.parseBoolean(getOptional("kylin.job.allow.empty.segment", "true"));
     }
 
+    //UHC: ultra high cardinality columns, contain the ShardByColumns and the GlobalDictionaryColumns
+    public int getUHCReducerCount() {
+        return Integer.parseInt(getOptional("kylin.job.uhc.reducer.count", "3"));
+    }
+
     public String getOverrideHiveTableLocation(String table) {
         return getOptional("hive.table.location." + table.toUpperCase());
     }
@@ -479,6 +487,10 @@ abstract public class KylinConfigBase implements Serializable {
 
     public int getScanThreshold() {
         return Integer.parseInt(getOptional("kylin.query.scan.threshold", "10000000"));
+    }
+
+    public int getDerivedInThreshold() {
+        return Integer.parseInt(getOptional("kylin.query.filter.derived_in.max", "20"));
     }
 
     public int getBadQueryStackTraceDepth() {
@@ -629,6 +641,10 @@ abstract public class KylinConfigBase implements Serializable {
         return this.getOptional("kylin.job.hive.database.for.intermediatetable", "default");
     }
 
+    public boolean isHiveRedistributeEnabled() {
+        return Boolean.parseBoolean(this.getOptional("kylin.job.hive.intermediatetable.redistribute.enabled", "true"));
+    }
+
     public String getHiveDependencyFilterList() {
         return this.getOptional("kylin.job.dependency.filterlist", "[^,]*hive-exec[0-9.-]+[^,]*?\\.jar" + "|" + "[^,]*hive-metastore[0-9.-]+[^,]*?\\.jar" + "|" + "[^,]*hive-hcatalog-core[0-9.-]+[^,]*?\\.jar");
     }
@@ -745,6 +761,7 @@ abstract public class KylinConfigBase implements Serializable {
     public Map<Integer, String> getSchedulers() {
         Map<Integer, String> r = convertKeyToInteger(getPropertiesByPrefix("kylin.scheduler."));
         r.put(0, "org.apache.kylin.job.impl.threadpool.DefaultScheduler");
+        r.put(2, "org.apache.kylin.job.impl.threadpool.DistributedScheduler");
         return r;
     }
 
@@ -807,6 +824,7 @@ abstract public class KylinConfigBase implements Serializable {
         setProperty("kylin.dict.append.cache.size", String.valueOf(cacheSize));
     }
 
+    @Deprecated
     public String getCreateFlatHiveTableMethod() {
         return getOptional("kylin.hive.create.flat.table.method", "1");
     }

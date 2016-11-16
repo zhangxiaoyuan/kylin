@@ -113,7 +113,7 @@ public class InMemCuboidMapper<KEYIN> extends KylinMapper<KEYIN, Object, ByteArr
     }
 
     @Override
-    public void map(KEYIN key, Object record, Context context) throws IOException, InterruptedException {
+    public void doMap(KEYIN key, Object record, Context context) throws IOException, InterruptedException {
         // put each row to the queue
         String[] row = flatTableInputFormat.parseMapperInput(record);
         List<String> rowAsList = Arrays.asList(row);
@@ -130,7 +130,7 @@ public class InMemCuboidMapper<KEYIN> extends KylinMapper<KEYIN, Object, ByteArr
     }
 
     @Override
-    protected void cleanup(Context context) throws IOException, InterruptedException {
+    protected void doCleanup(Context context) throws IOException, InterruptedException {
         logger.info("Totally handled " + counter + " records!");
 
         while (!future.isDone()) {

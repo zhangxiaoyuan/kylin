@@ -25,6 +25,7 @@ import org.apache.commons.cli.Options;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.mapreduce.Reducer.Context;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.mapreduce.lib.output.SequenceFileOutputFormat;
 import org.apache.hadoop.util.ToolRunner;
@@ -40,7 +41,7 @@ import org.apache.kylin.engine.mr.MRUtil;
 import org.apache.kylin.engine.mr.common.AbstractHadoopJob;
 import org.apache.kylin.engine.mr.common.BatchConstants;
 import org.apache.kylin.engine.mr.common.CubeStatsReader;
-import org.apache.kylin.job.manager.ExecutableManager;
+import org.apache.kylin.job.execution.ExecutableManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -157,7 +158,7 @@ public class InMemCuboidJob extends AbstractHadoopJob {
 
         logger.info("Having total map input MB " + Math.round(totalSizeInM));
         logger.info("Having per reduce MB " + perReduceInputMB);
-        logger.info("Setting " + "mapred.reduce.tasks" + "=" + numReduceTasks);
+        logger.info("Setting " + Context.NUM_REDUCES + "=" + numReduceTasks);
         return numReduceTasks;
     }
 

@@ -84,7 +84,7 @@ public class RangeKeyDistributionReducer extends KylinReducer<Text, LongWritable
     }
 
     @Override
-    public void reduce(Text key, Iterable<LongWritable> values, Context context) throws IOException, InterruptedException {
+    public void doReduce(Text key, Iterable<LongWritable> values, Context context) throws IOException, InterruptedException {
         for (LongWritable v : values) {
             bytesRead += v.get();
         }
@@ -96,7 +96,7 @@ public class RangeKeyDistributionReducer extends KylinReducer<Text, LongWritable
     }
 
     @Override
-    protected void cleanup(Context context) throws IOException, InterruptedException {
+    protected void doCleanup(Context context) throws IOException, InterruptedException {
         int nRegion = Math.round((float) gbPoints.size() / cut);
         nRegion = Math.max(minRegionCount, nRegion);
         nRegion = Math.min(maxRegionCount, nRegion);

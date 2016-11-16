@@ -44,7 +44,7 @@ public class RangeKeyDistributionMapper extends KylinMapper<Text, Text, Text, Lo
     }
 
     @Override
-    public void map(Text key, Text value, Context context) throws IOException, InterruptedException {
+    public void doMap(Text key, Text value, Context context) throws IOException, InterruptedException {
         lastKey = key;
 
         int bytesLength = key.getLength() + value.getLength();
@@ -61,7 +61,7 @@ public class RangeKeyDistributionMapper extends KylinMapper<Text, Text, Text, Lo
     }
 
     @Override
-    protected void cleanup(Context context) throws IOException, InterruptedException {
+    protected void doCleanup(Context context) throws IOException, InterruptedException {
         if (lastKey != null) {
             outputValue.set(bytesRead);
             context.write(lastKey, outputValue);

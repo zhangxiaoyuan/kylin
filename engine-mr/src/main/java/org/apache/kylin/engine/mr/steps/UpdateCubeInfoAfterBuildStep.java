@@ -18,22 +18,18 @@
 
 package org.apache.kylin.engine.mr.steps;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.text.ParseException;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.FastDateFormat;
-import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
 import org.apache.kylin.common.util.DateFormat;
 import org.apache.kylin.cube.CubeInstance;
 import org.apache.kylin.cube.CubeManager;
 import org.apache.kylin.cube.CubeSegment;
 import org.apache.kylin.engine.mr.CubingJob;
-import org.apache.kylin.engine.mr.HadoopUtil;
+import org.apache.kylin.engine.mr.DFSFileTable;
 import org.apache.kylin.engine.mr.common.BatchConstants;
 import org.apache.kylin.job.exception.ExecuteException;
 import org.apache.kylin.job.execution.AbstractExecutable;
@@ -41,6 +37,7 @@ import org.apache.kylin.job.execution.ExecutableContext;
 import org.apache.kylin.job.execution.ExecuteResult;
 import org.apache.kylin.metadata.datatype.DataType;
 import org.apache.kylin.metadata.model.TblColRef;
+import org.apache.kylin.source.ReadableTable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,7 +56,7 @@ public class UpdateCubeInfoAfterBuildStep extends AbstractExecutable {
         final CubeInstance cube = cubeManager.getCube(CubingExecutableUtil.getCubeName(this.getParams()));
         final CubeSegment segment = cube.getSegmentById(CubingExecutableUtil.getSegmentId(this.getParams()));
 
-        CubingJob cubingJob = (CubingJob) executableManager.getJob(CubingExecutableUtil.getCubingJobId(this.getParams()));
+        CubingJob cubingJob = (CubingJob) getManager().getJob(CubingExecutableUtil.getCubingJobId(this.getParams()));
         long sourceCount = cubingJob.findSourceRecordCount();
         long sourceSizeBytes = cubingJob.findSourceSizeBytes();
         long cubeSizeBytes = cubingJob.findCubeSizeBytes();
@@ -86,30 +83,8 @@ public class UpdateCubeInfoAfterBuildStep extends AbstractExecutable {
 
     private void updateTimeRange(CubeSegment segment) throws IOException {
         final TblColRef partitionCol = segment.getCubeDesc().getModel().getPartitionDesc().getPartitionDateColumnRef();
-        final String outputPath = this.getParams().get(BatchConstants.CFG_OUTPUT_PATH);
-        final Path outputFile = new Path(outputPath, partitionCol.getName());
-
-        String minValue = null, maxValue = null, currentValue = null;
-        FSDataInputStream inputStream = null;
-        BufferedReader bufferedReader = null;
-        try {
-            FileSystem fs = HadoopUtil.getFileSystem(outputPath);
-            inputStream = fs.open(outputFile);
-            bufferedReader = new BufferedReader(new InputStreamReader(inputStream));
-            minValue = currentValue = bufferedReader.readLine();
-            while (currentValue != null) {
-                maxValue = currentValue;
-                currentValue = bufferedReader.readLine();
-            }
-        } catch (IOException e) {
-            throw e;
-        } finally {
-            IOUtils.closeQuietly(bufferedReader);
-            IOUtils.closeQuietly(inputStream);
-        }
-
         final DataType partitionColType = partitionCol.getType();
-        FastDateFormat dateFormat;
+        final FastDateFormat dateFormat;
         if (partitionColType.isDate()) {
             dateFormat = DateFormat.getDateFormat(DateFormat.DEFAULT_DATE_PATTERN);
         } else if (partitionColType.isDatetime() || partitionColType.isTimestamp()) {
@@ -124,14 +99,24 @@ public class UpdateCubeInfoAfterBuildStep extends AbstractExecutable {
             throw new IllegalStateException("Type " + partitionColType + " is not valid partition column type");
         }
 
+        final String factDistinctPath = this.getParams().get(BatchConstants.CFG_OUTPUT_PATH);
+        final ReadableTable readableTable = new DFSFileTable(factDistinctPath + "/" + partitionCol.getName(), -1);
+        final ReadableTable.TableReader tableReader = readableTable.getReader();
+        long minValue = Long.MAX_VALUE, maxValue = Long.MIN_VALUE;
         try {
-            long startTime = dateFormat.parse(minValue).getTime();
-            long endTime = dateFormat.parse(maxValue).getTime();
-            segment.setDateRangeStart(startTime);
-            segment.setDateRangeEnd(endTime);
-        } catch (Exception e) {
-            throw new IllegalStateException(e);
+            while (tableReader.next()) {
+                long time = dateFormat.parse(tableReader.getRow()[0]).getTime();
+                minValue = Math.min(minValue, time);
+                maxValue = Math.max(maxValue, time);
+            }
+        } catch (ParseException e) {
+            throw new IOException(e);
+        } finally {
+            IOUtils.closeQuietly(tableReader);
         }
+
+        segment.setDateRangeStart(minValue);
+        segment.setDateRangeEnd(maxValue);
     }
 
 }

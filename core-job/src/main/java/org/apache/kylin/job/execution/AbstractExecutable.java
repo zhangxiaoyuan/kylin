@@ -32,7 +32,6 @@ import org.apache.kylin.common.util.MailService;
 import org.apache.kylin.job.exception.ExecuteException;
 import org.apache.kylin.job.exception.PersistentException;
 import org.apache.kylin.job.impl.threadpool.DefaultContext;
-import org.apache.kylin.job.manager.ExecutableManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -53,43 +52,55 @@ public abstract class AbstractExecutable implements Executable, Idempotent {
     protected static final Logger logger = LoggerFactory.getLogger(AbstractExecutable.class);
     protected int retry = 0;
 
+    private KylinConfig config;
     private String name;
     private String id;
     private Map<String, String> params = Maps.newHashMap();
 
-    protected static ExecutableManager executableManager = ExecutableManager.getInstance(KylinConfig.getInstanceFromEnv());
-
     public AbstractExecutable() {
         setId(UUID.randomUUID().toString());
+    }
+    
+    protected void initConfig(KylinConfig config) {
+        Preconditions.checkState(this.config == null || this.config == config);
+        this.config = config;
+    }
+    
+    protected KylinConfig getConfig() {
+        return config;
+    }
+    
+    protected ExecutableManager getManager() {
+        return ExecutableManager.getInstance(config);
     }
 
     protected void onExecuteStart(ExecutableContext executableContext) {
         Map<String, String> info = Maps.newHashMap();
         info.put(START_TIME, Long.toString(System.currentTimeMillis()));
-        executableManager.updateJobOutput(getId(), ExecutableState.RUNNING, info, null);
+        getManager().updateJobOutput(getId(), ExecutableState.RUNNING, info, null);
     }
 
     protected void onExecuteFinished(ExecuteResult result, ExecutableContext executableContext) {
         setEndTime(System.currentTimeMillis());
         if (!isDiscarded()) {
             if (result.succeed()) {
-                executableManager.updateJobOutput(getId(), ExecutableState.SUCCEED, null, result.output());
+                getManager().updateJobOutput(getId(), ExecutableState.SUCCEED, null, result.output());
             } else {
-                executableManager.updateJobOutput(getId(), ExecutableState.ERROR, null, result.output());
+                getManager().updateJobOutput(getId(), ExecutableState.ERROR, null, result.output());
             }
         }
     }
 
     protected void onExecuteError(Throwable exception, ExecutableContext executableContext) {
         if (!isDiscarded()) {
-            executableManager.addJobInfo(getId(), END_TIME, Long.toString(System.currentTimeMillis()));
+            getManager().addJobInfo(getId(), END_TIME, Long.toString(System.currentTimeMillis()));
             String output = null;
             if (exception != null) {
                 final StringWriter out = new StringWriter();
                 exception.printStackTrace(new PrintWriter(out));
                 output = out.toString();
             }
-            executableManager.updateJobOutput(getId(), ExecutableState.ERROR, null, output);
+            getManager().updateJobOutput(getId(), ExecutableState.ERROR, null, output);
         }
     }
 
@@ -190,7 +201,8 @@ public abstract class AbstractExecutable implements Executable, Idempotent {
 
     @Override
     public final ExecutableState getStatus() {
-        return executableManager.getOutput(this.getId()).getState();
+        ExecutableManager manager = getManager();
+        return manager.getOutput(this.getId()).getState();
     }
 
     @Override
@@ -211,7 +223,7 @@ public abstract class AbstractExecutable implements Executable, Idempotent {
     }
 
     public final long getLastModified() {
-        return executableManager.getOutput(getId()).getLastModified();
+        return getOutput().getLastModified();
     }
 
     public final void setSubmitter(String submitter) {
@@ -241,14 +253,13 @@ public abstract class AbstractExecutable implements Executable, Idempotent {
 
     protected final void notifyUserStatusChange(ExecutableContext context, ExecutableState state) {
         try {
-            final KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
-            List<String> users = getAllNofifyUsers(kylinConfig);
+            List<String> users = getAllNofifyUsers(config);
             if (users.isEmpty()) {
                 logger.warn("no need to send email, user list is empty");
                 return;
             }
             final Pair<String, String> email = formatNotifications(context, state);
-            doSendMail(kylinConfig, users, email);
+            doSendMail(config, users, email);
         } catch (Exception e) {
             logger.error("error send email", e);
         }
@@ -280,13 +291,12 @@ public abstract class AbstractExecutable implements Executable, Idempotent {
 
     protected void sendMail(Pair<String, String> email) {
         try {
-            final KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
-            List<String> users = getAllNofifyUsers(kylinConfig);
+            List<String> users = getAllNofifyUsers(config);
             if (users.isEmpty()) {
                 logger.warn("no need to send email, user list is empty");
                 return;
             }
-            doSendMail(kylinConfig, users, email);
+            doSendMail(config, users, email);
         } catch (Exception e) {
             logger.error("error send email", e);
         }
@@ -298,11 +308,11 @@ public abstract class AbstractExecutable implements Executable, Idempotent {
 
     @Override
     public final Output getOutput() {
-        return executableManager.getOutput(getId());
+        return getManager().getOutput(getId());
     }
 
     protected long getExtraInfoAsLong(String key, long defaultValue) {
-        return getExtraInfoAsLong(executableManager.getOutput(getId()), key, defaultValue);
+        return getExtraInfoAsLong(getOutput(), key, defaultValue);
     }
 
     public static long getStartTime(Output output) {
@@ -334,11 +344,11 @@ public abstract class AbstractExecutable implements Executable, Idempotent {
     }
 
     protected final void addExtraInfo(String key, String value) {
-        executableManager.addJobInfo(getId(), key, value);
+        getManager().addJobInfo(getId(), key, value);
     }
 
     protected final Map<String, String> getExtraInfo() {
-        return executableManager.getOutput(getId()).getExtra();
+        return getOutput().getExtra();
     }
 
     public final void setStartTime(long time) {
@@ -366,12 +376,12 @@ public abstract class AbstractExecutable implements Executable, Idempotent {
     *
     * */
     protected final boolean isDiscarded() {
-        final ExecutableState status = executableManager.getOutput(getId()).getState();
+        final ExecutableState status = getOutput().getState();
         return status == ExecutableState.DISCARDED;
     }
 
     protected boolean needRetry() {
-        return this.retry <= KylinConfig.getInstanceFromEnv().getJobRetry();
+        return this.retry <= config.getJobRetry();
     }
 
     @Override

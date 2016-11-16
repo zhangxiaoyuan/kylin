@@ -19,6 +19,8 @@
 package org.apache.kylin.rest.service;
 
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.Calendar;
 import java.util.Collections;
 import java.util.Date;
@@ -26,8 +28,11 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TimeZone;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.kylin.common.KylinConfig;
+import org.apache.kylin.common.util.ClassUtil;
 import org.apache.kylin.cube.CubeInstance;
 import org.apache.kylin.cube.CubeSegment;
 import org.apache.kylin.cube.CubeUpdate;
@@ -38,15 +43,21 @@ import org.apache.kylin.engine.mr.common.HadoopShellExecutable;
 import org.apache.kylin.engine.mr.common.MapReduceExecutable;
 import org.apache.kylin.engine.mr.steps.CubingExecutableUtil;
 import org.apache.kylin.job.JobInstance;
+import org.apache.kylin.job.Scheduler;
+import org.apache.kylin.job.SchedulerFactory;
 import org.apache.kylin.job.common.ShellExecutable;
 import org.apache.kylin.job.constant.JobStatusEnum;
 import org.apache.kylin.job.constant.JobStepStatusEnum;
 import org.apache.kylin.job.constant.JobTimeFilterEnum;
+import org.apache.kylin.job.engine.JobEngineConfig;
 import org.apache.kylin.job.exception.JobException;
+import org.apache.kylin.job.exception.SchedulerException;
 import org.apache.kylin.job.execution.AbstractExecutable;
 import org.apache.kylin.job.execution.DefaultChainedExecutable;
 import org.apache.kylin.job.execution.ExecutableState;
 import org.apache.kylin.job.execution.Output;
+import org.apache.kylin.job.lock.DistributedJobLock;
+import org.apache.kylin.job.lock.JobLock;
 import org.apache.kylin.metadata.model.SegmentStatusEnum;
 import org.apache.kylin.metadata.realization.RealizationStatusEnum;
 import org.apache.kylin.rest.constant.Constant;
@@ -56,12 +67,16 @@ import org.apache.kylin.source.SourceFactory;
 import org.apache.kylin.source.SourcePartition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.InitializingBean;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.EnableAspectJAutoProxy;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Component;
 
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Predicate;
+import com.google.common.base.Predicates;
 import com.google.common.collect.FluentIterable;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -69,14 +84,62 @@ import com.google.common.collect.Sets;
 /**
  * @author ysong1
  */
-@Component("jobService")
-public class JobService extends BasicService {
 
-    @SuppressWarnings("unused")
+@EnableAspectJAutoProxy(proxyTargetClass = true)
+@Component("jobService")
+public class JobService extends BasicService implements InitializingBean {
+
     private static final Logger logger = LoggerFactory.getLogger(JobService.class);
+
+    private JobLock jobLock;
 
     @Autowired
     private AccessService accessService;
+
+    /*
+    * (non-Javadoc)
+    *
+    * @see
+    * org.springframework.beans.factory.InitializingBean#afterPropertiesSet()
+    */
+    @SuppressWarnings("unchecked")
+    @Override
+    public void afterPropertiesSet() throws Exception {
+
+        String timeZone = getConfig().getTimeZone();
+        TimeZone tzone = TimeZone.getTimeZone(timeZone);
+        TimeZone.setDefault(tzone);
+
+        final KylinConfig kylinConfig = KylinConfig.getInstanceFromEnv();
+        final Scheduler<AbstractExecutable> scheduler = (Scheduler<AbstractExecutable>) SchedulerFactory.scheduler(kylinConfig.getSchedulerType());
+
+        jobLock = (JobLock) ClassUtil.newInstance(kylinConfig.getJobControllerLock());
+
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    scheduler.init(new JobEngineConfig(kylinConfig), jobLock);
+                    if (!scheduler.hasStarted()) {
+                        logger.info("scheduler has not been started");
+                    }
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        }).start();
+
+        Runtime.getRuntime().addShutdownHook(new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    scheduler.shutdown();
+                } catch (SchedulerException e) {
+                    logger.error("error occurred to shutdown scheduler", e);
+                }
+            }
+        }));
+    }
 
     public List<JobInstance> listAllJobs(final String cubeName, final String projectName, final List<JobStatusEnum> statusList, final Integer limitValue, final Integer offsetValue, final JobTimeFilterEnum timeFilter) throws IOException, JobException {
         Integer limit = (null == limitValue) ? 30 : limitValue;
@@ -98,9 +161,8 @@ public class JobService extends BasicService {
     public List<JobInstance> listAllJobs(final String cubeName, final String projectName, final List<JobStatusEnum> statusList, final JobTimeFilterEnum timeFilter) {
         Calendar calendar = Calendar.getInstance();
         calendar.setTime(new Date());
-        long currentTimeMillis = calendar.getTimeInMillis();
         long timeStartInMillis = getTimeStartInMillis(calendar, timeFilter);
-        return listCubeJobInstance(cubeName, projectName, statusList, timeStartInMillis, currentTimeMillis);
+        return listCubeJobInstance(cubeName, projectName, statusList, timeStartInMillis, Long.MAX_VALUE);
     }
 
     @Deprecated
@@ -210,22 +272,47 @@ public class JobService extends BasicService {
 
         checkCubeDescSignature(cube);
         DefaultChainedExecutable job;
-        if (buildType == CubeBuildTypeEnum.BUILD) {
-            ISource source = SourceFactory.tableSource(cube);
-            SourcePartition sourcePartition = new SourcePartition(startDate, endDate, startOffset, endOffset, sourcePartitionOffsetStart, sourcePartitionOffsetEnd);
-            sourcePartition = source.parsePartitionBeforeBuild(cube, sourcePartition);
-            CubeSegment newSeg = getCubeManager().appendSegment(cube, sourcePartition);
-            job = EngineFactory.createBatchCubingJob(newSeg, submitter);
-        } else if (buildType == CubeBuildTypeEnum.MERGE) {
-            CubeSegment newSeg = getCubeManager().mergeSegments(cube, startDate, endDate, startOffset, endOffset, force);
-            job = EngineFactory.createBatchMergeJob(newSeg, submitter);
-        } else if (buildType == CubeBuildTypeEnum.REFRESH) {
-            CubeSegment refreshSeg = getCubeManager().refreshSegment(cube, startDate, endDate, startOffset, endOffset);
-            job = EngineFactory.createBatchCubingJob(refreshSeg, submitter);
-        } else {
-            throw new JobException("invalid build type:" + buildType);
+
+        CubeSegment newSeg = null;
+        try {
+            if (buildType == CubeBuildTypeEnum.BUILD) {
+                ISource source = SourceFactory.tableSource(cube);
+                SourcePartition sourcePartition = new SourcePartition(startDate, endDate, startOffset, endOffset, sourcePartitionOffsetStart, sourcePartitionOffsetEnd);
+                sourcePartition = source.parsePartitionBeforeBuild(cube, sourcePartition);
+                newSeg = getCubeManager().appendSegment(cube, sourcePartition);
+                lockSegment(newSeg.getUuid());
+                job = EngineFactory.createBatchCubingJob(newSeg, submitter);
+            } else if (buildType == CubeBuildTypeEnum.MERGE) {
+                newSeg = getCubeManager().mergeSegments(cube, startDate, endDate, startOffset, endOffset, force);
+                lockSegment(newSeg.getUuid());
+                job = EngineFactory.createBatchMergeJob(newSeg, submitter);
+            } else if (buildType == CubeBuildTypeEnum.REFRESH) {
+                newSeg = getCubeManager().refreshSegment(cube, startDate, endDate, startOffset, endOffset);
+                lockSegment(newSeg.getUuid());
+                job = EngineFactory.createBatchCubingJob(newSeg, submitter);
+            } else {
+                throw new JobException("invalid build type:" + buildType);
+            }
+
+            getExecutableManager().addJob(job);
+
+        } catch (Exception e) {
+            if (newSeg != null) {
+                logger.error("Job submission might failed for NEW segment {}, will clean the NEW segment from cube", newSeg.getName());
+                try {
+                    // Remove this segments
+                    CubeUpdate cubeBuilder = new CubeUpdate(cube);
+                    cubeBuilder.setToRemoveSegs(newSeg);
+                    getCubeManager().updateCube(cubeBuilder);
+                } catch (Exception ee) {
+                    // swallow the exception
+                    logger.error("Clean New segment failed, ignoring it", e);
+                }
+            }
+            throw e;
+
         }
-        getExecutableManager().addJob(job);
+
         JobInstance jobInstance = getSingleJobInstance(job);
 
         accessService.init(jobInstance, null);
@@ -363,12 +450,19 @@ public class JobService extends BasicService {
 
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#job, 'ADMINISTRATION') or hasPermission(#job, 'OPERATION') or hasPermission(#job, 'MANAGEMENT')")
     public void resumeJob(JobInstance job) throws IOException, JobException {
+        lockSegment(job.getRelatedSegment());
+
         getExecutableManager().resumeJob(job.getId());
     }
 
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#job, 'ADMINISTRATION') or hasPermission(#job, 'OPERATION') or hasPermission(#job, 'MANAGEMENT')")
     public JobInstance cancelJob(JobInstance job) throws IOException, JobException {
+        if (null == job.getRelatedCube() || null == getCubeManager().getCube(job.getRelatedCube())) {
+            getExecutableManager().discardJob(job.getId());
+            return job;
+        }
         CubeInstance cubeInstance = getCubeManager().getCube(job.getRelatedCube());
+        // might not a cube job
         final String segmentIds = job.getRelatedSegment();
         for (String segmentId : StringUtils.split(segmentIds)) {
             final CubeSegment segment = cubeInstance.getSegmentById(segmentId);
@@ -380,7 +474,91 @@ public class JobService extends BasicService {
             }
         }
         getExecutableManager().discardJob(job.getId());
+
+        //release the segment lock when discarded the job but the job hasn't scheduled
+        releaseSegmentLock(job.getRelatedSegment());
+
         return job;
     }
+
+    private void lockSegment(String segmentId) throws JobException {
+        if (jobLock instanceof DistributedJobLock) {
+            if (!((DistributedJobLock) jobLock).lockWithName(segmentId, getServerName())) {
+                throw new JobException("Fail to get the segment lock, the segment may be building in another job server");
+            }
+        }
+    }
+
+    private void releaseSegmentLock(String segmentId) {
+        if (jobLock instanceof DistributedJobLock) {
+            ((DistributedJobLock) jobLock).unlockWithName(segmentId);
+        }
+    }
+
+    private String getServerName() {
+        String serverName = null;
+        try {
+            serverName = InetAddress.getLocalHost().getHostName();
+        } catch (UnknownHostException e) {
+            logger.error("fail to get the hostname");
+        }
+        return serverName;
+    }
+    
+    public List<CubingJob> listAllCubingJobs(final String cubeName, final String projectName, final Set<ExecutableState> statusList, final Map<String, Output> allOutputs) {
+        return listAllCubingJobs(cubeName, projectName, statusList, -1L, -1L, allOutputs);
+    }
+
+    public List<CubingJob> listAllCubingJobs(final String cubeName, final String projectName, final Set<ExecutableState> statusList, long timeStartInMillis, long timeEndInMillis, final Map<String, Output> allOutputs) {
+        List<CubingJob> results = Lists.newArrayList(FluentIterable.from(getExecutableManager().getAllExecutables(timeStartInMillis, timeEndInMillis)).filter(new Predicate<AbstractExecutable>() {
+            @Override
+            public boolean apply(AbstractExecutable executable) {
+                if (executable instanceof CubingJob) {
+                    if (cubeName == null) {
+                        return true;
+                    }
+                    return CubingExecutableUtil.getCubeName(executable.getParams()).equalsIgnoreCase(cubeName);
+                } else {
+                    return false;
+                }
+            }
+        }).transform(new Function<AbstractExecutable, CubingJob>() {
+            @Override
+            public CubingJob apply(AbstractExecutable executable) {
+                return (CubingJob) executable;
+            }
+        }).filter(Predicates.and(new Predicate<CubingJob>() {
+            @Override
+            public boolean apply(CubingJob executable) {
+                if (null == projectName || null == getProjectManager().getProject(projectName)) {
+                    return true;
+                } else {
+                    return projectName.equals(executable.getProjectName());
+                }
+            }
+        }, new Predicate<CubingJob>() {
+            @Override
+            public boolean apply(CubingJob executable) {
+                try {
+                    Output output = allOutputs.get(executable.getId());
+                    ExecutableState state = output.getState();
+                    boolean ret = statusList.contains(state);
+                    return ret;
+                } catch (Exception e) {
+                    throw e;
+                }
+            }
+        })));
+        return results;
+    }
+
+    public List<CubingJob> listAllCubingJobs(final String cubeName, final String projectName, final Set<ExecutableState> statusList) {
+        return listAllCubingJobs(cubeName, projectName, statusList, getExecutableManager().getAllOutputs());
+    }
+
+    public List<CubingJob> listAllCubingJobs(final String cubeName, final String projectName) {
+        return listAllCubingJobs(cubeName, projectName, EnumSet.allOf(ExecutableState.class), getExecutableManager().getAllOutputs());
+    }
+
 
 }

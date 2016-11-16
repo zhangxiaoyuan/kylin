@@ -19,11 +19,9 @@
 package org.apache.kylin.source.hive;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.Map;
 import java.util.Set;
 
-import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
@@ -32,7 +30,6 @@ import org.apache.hive.hcatalog.data.HCatRecord;
 import org.apache.hive.hcatalog.mapreduce.HCatInputFormat;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.util.BufferedLogger;
-import org.apache.kylin.common.util.CliCommandExecutor;
 import org.apache.kylin.common.util.Pair;
 import org.apache.kylin.cube.CubeInstance;
 import org.apache.kylin.cube.CubeManager;
@@ -61,7 +58,6 @@ import org.slf4j.LoggerFactory;
 import com.google.common.collect.Sets;
 
 public class HiveMRInput implements IMRInput {
-
 
     @Override
     public IMRBatchCubingInputSide getBatchCubingInputSide(IJoinedFlatTableDesc flatDesc) {
@@ -132,20 +128,11 @@ public class HiveMRInput implements IMRInput {
             final String cubeName = CubingExecutableUtil.getCubeName(jobFlow.getParams());
             final KylinConfig kylinConfig = CubeManager.getInstance(conf.getConfig()).getCube(cubeName).getConfig();
 
-            String createFlatTableMethod = kylinConfig.getCreateFlatHiveTableMethod();
-            if ("1".equals(createFlatTableMethod)) {
-                // create flat table first, then count and redistribute
-                jobFlow.addTask(createFlatHiveTableStep(conf, flatDesc, jobFlow.getId(), cubeName, false, ""));
+            // create flat table first, then count and redistribute
+            jobFlow.addTask(createFlatHiveTableStep(conf, flatDesc, jobFlow.getId(), cubeName));
+            if (kylinConfig.isHiveRedistributeEnabled() == true) {
                 jobFlow.addTask(createRedistributeFlatHiveTableStep(conf, flatDesc, jobFlow.getId(), cubeName));
-            } else if ("2".equals(createFlatTableMethod)) {
-                // count from source table first, and then redistribute, suitable for partitioned table
-                final String rowCountOutputDir = JobBuilderSupport.getJobWorkingDir(conf, jobFlow.getId()) + "/row_count";
-                jobFlow.addTask(createCountHiveTableStep(conf, flatDesc, jobFlow.getId(), rowCountOutputDir));
-                jobFlow.addTask(createFlatHiveTableStep(conf, flatDesc, jobFlow.getId(), cubeName, true, rowCountOutputDir));
-            } else {
-                throw new IllegalArgumentException("Unknown value for kylin.hive.create.flat.table.method: " + createFlatTableMethod);
             }
-
             AbstractExecutable task = createLookupHiveViewMaterializationStep(jobFlow.getId());
             if (task != null) {
                 jobFlow.addTask(task);
@@ -158,35 +145,15 @@ public class HiveMRInput implements IMRInput {
             hiveInitBuf.append(JoinedFlatTable.generateHiveSetStatements(conf));
             final KylinConfig kylinConfig = ((CubeSegment) flatTableDesc.getSegment()).getConfig();
             appendHiveOverrideProperties(kylinConfig, hiveInitBuf);
-            String rowCountOutputDir = JobBuilderSupport.getJobWorkingDir(conf, jobId) + "/row_count";
 
             RedistributeFlatHiveTableStep step = new RedistributeFlatHiveTableStep();
             step.setInitStatement(hiveInitBuf.toString());
-            step.setSelectRowCountStatement(JoinedFlatTable.generateSelectRowCountStatement(flatTableDesc, rowCountOutputDir));
-            step.setRowCountOutputDir(rowCountOutputDir);
+            step.setIntermediateTable(flatTableDesc.getTableName());
             step.setRedistributeDataStatement(JoinedFlatTable.generateRedistributeFlatTableStatement(flatTableDesc));
             CubingExecutableUtil.setCubeName(cubeName, step.getParams());
             step.setName(ExecutableConstants.STEP_NAME_REDISTRIBUTE_FLAT_HIVE_TABLE);
             return step;
         }
-
-
-        public static AbstractExecutable createCountHiveTableStep(JobEngineConfig conf, IJoinedFlatTableDesc flatTableDesc, String jobId, String rowCountOutputDir) {
-            final ShellExecutable step = new ShellExecutable();
-
-            final HiveCmdBuilder hiveCmdBuilder = new HiveCmdBuilder();
-            final KylinConfig kylinConfig = ((CubeSegment) flatTableDesc.getSegment()).getConfig();
-            appendHiveOverrideProperties2(kylinConfig, hiveCmdBuilder);
-            hiveCmdBuilder.addStatement(JoinedFlatTable.generateHiveSetStatements(conf));
-            hiveCmdBuilder.addStatement("set hive.exec.compress.output=false;\n");
-            hiveCmdBuilder.addStatement(JoinedFlatTable.generateCountDataStatement(flatTableDesc, rowCountOutputDir));
-
-            step.setCmd(hiveCmdBuilder.build());
-            step.setName(ExecutableConstants.STEP_NAME_COUNT_HIVE_TABLE);
-
-            return step;
-        }
-
 
         public ShellExecutable createLookupHiveViewMaterializationStep(String jobId) {
             ShellExecutable step = new ShellExecutable();
@@ -229,7 +196,7 @@ public class HiveMRInput implements IMRInput {
             return step;
         }
 
-        public static AbstractExecutable createFlatHiveTableStep(JobEngineConfig conf, IJoinedFlatTableDesc flatTableDesc, String jobId, String cubeName, boolean redistribute, String rowCountOutputDir) {
+        public static AbstractExecutable createFlatHiveTableStep(JobEngineConfig conf, IJoinedFlatTableDesc flatTableDesc, String jobId, String cubeName) {
             StringBuilder hiveInitBuf = new StringBuilder();
             hiveInitBuf.append(JoinedFlatTable.generateHiveSetStatements(conf));
             final KylinConfig kylinConfig = ((CubeSegment) flatTableDesc.getSegment()).getConfig();
@@ -237,12 +204,10 @@ public class HiveMRInput implements IMRInput {
             final String useDatabaseHql = "USE " + conf.getConfig().getHiveDatabaseForIntermediateTable() + ";\n";
             final String dropTableHql = JoinedFlatTable.generateDropTableStatement(flatTableDesc);
             final String createTableHql = JoinedFlatTable.generateCreateTableStatement(flatTableDesc, JobBuilderSupport.getJobWorkingDir(conf, jobId));
-            String insertDataHqls = JoinedFlatTable.generateInsertDataStatement(flatTableDesc, conf, redistribute);
+            String insertDataHqls = JoinedFlatTable.generateInsertDataStatement(flatTableDesc, conf);
 
             CreateFlatHiveTableStep step = new CreateFlatHiveTableStep();
-            step.setUseRedistribute(redistribute);
             step.setInitStatement(hiveInitBuf.toString());
-            step.setRowCountOutputDir(rowCountOutputDir);
             step.setCreateTableStatement(useDatabaseHql + dropTableHql + createTableHql + insertDataHqls);
             CubingExecutableUtil.setCubeName(cubeName, step.getParams());
             step.setName(ExecutableConstants.STEP_NAME_CREATE_FLAT_HIVE_TABLE);
@@ -272,32 +237,9 @@ public class HiveMRInput implements IMRInput {
     public static class RedistributeFlatHiveTableStep extends AbstractExecutable {
         private final BufferedLogger stepLogger = new BufferedLogger(logger);
 
-        private void computeRowCount(CliCommandExecutor cmdExecutor) throws IOException {
-            final HiveCmdBuilder hiveCmdBuilder = new HiveCmdBuilder();
-            hiveCmdBuilder.addStatement(getInitStatement());
-            hiveCmdBuilder.addStatement("set hive.exec.compress.output=false;\n");
-            hiveCmdBuilder.addStatement(getSelectRowCountStatement());
-            final String cmd = hiveCmdBuilder.build();
-
-            stepLogger.log("Compute row count of flat hive table, cmd: ");
-            stepLogger.log(cmd);
-
-            Pair<Integer, String> response = cmdExecutor.execute(cmd, stepLogger);
-            if (response.getFirst() != 0) {
-                throw new RuntimeException("Failed to compute row count of flat hive table");
-            }
-        }
-
-        private long readRowCountFromFile(Path file) throws IOException {
-            FileSystem fs = FileSystem.get(file.toUri(), HadoopUtil.getCurrentConfiguration());
-            InputStream in = fs.open(file);
-            try {
-                String content = IOUtils.toString(in, "UTF-8");
-                return Long.valueOf(content.trim()); // strip the '\n' character
-
-            } finally {
-                IOUtils.closeQuietly(in);
-            }
+        private long computeRowCount(String database, String table) throws Exception {
+            IHiveClient hiveClient = HiveClientFactory.getHiveClient();
+            return hiveClient.getHiveTableRows(database, table);
         }
 
         private void redistributeTable(KylinConfig config, int numReducers) throws IOException {
@@ -327,16 +269,26 @@ public class HiveMRInput implements IMRInput {
         @Override
         protected ExecuteResult doWork(ExecutableContext context) throws ExecuteException {
             KylinConfig config = getCubeSpecificConfig();
+            String intermediateTable = getIntermediateTable();
+            String database, tableName;
+            if (intermediateTable.indexOf(".") > 0) {
+                database = intermediateTable.substring(0, intermediateTable.indexOf("."));
+                tableName = intermediateTable.substring(intermediateTable.indexOf(".") + 1);
+            } else {
+                database = config.getHiveDatabaseForIntermediateTable();
+                tableName = intermediateTable;
+            }
 
             try {
-
-                computeRowCount(config.getCliCommandExecutor());
-
-                Path rowCountFile = new Path(getRowCountOutputDir(), "000000_0");
-                long rowCount = readRowCountFromFile(rowCountFile);
-                if (!config.isEmptySegmentAllowed() && rowCount == 0) {
-                    stepLogger.log("Detect upstream hive table is empty, " + "fail the job because \"kylin.job.allow.empty.segment\" = \"false\"");
-                    return new ExecuteResult(ExecuteResult.State.ERROR, stepLogger.getBufferedLog());
+                long rowCount = computeRowCount(database, tableName);
+                logger.debug("Row count of table '" + intermediateTable + "' is " + rowCount);
+                if (rowCount == 0) {
+                    if (!config.isEmptySegmentAllowed()) {
+                        stepLogger.log("Detect upstream hive table is empty, " + "fail the job because \"kylin.job.allow.empty.segment\" = \"false\"");
+                        return new ExecuteResult(ExecuteResult.State.ERROR, stepLogger.getBufferedLog());
+                    } else {
+                        return new ExecuteResult(ExecuteResult.State.SUCCEED, "Row count is 0, no need to redistribute");
+                    }
                 }
 
                 int mapperInputRows = config.getHadoopJobMapperInputRows();
@@ -366,14 +318,6 @@ public class HiveMRInput implements IMRInput {
             return getParam("HiveInit");
         }
 
-        public void setSelectRowCountStatement(String sql) {
-            setParam("HiveSelectRowCount", sql);
-        }
-
-        public String getSelectRowCountStatement() {
-            return getParam("HiveSelectRowCount");
-        }
-
         public void setRedistributeDataStatement(String sql) {
             setParam("HiveRedistributeData", sql);
         }
@@ -382,12 +326,12 @@ public class HiveMRInput implements IMRInput {
             return getParam("HiveRedistributeData");
         }
 
-        public void setRowCountOutputDir(String rowCountOutputDir) {
-            setParam("rowCountOutputDir", rowCountOutputDir);
+        public String getIntermediateTable() {
+            return getParam("intermediateTable");
         }
 
-        public String getRowCountOutputDir() {
-            return getParam("rowCountOutputDir");
+        public void setIntermediateTable(String intermediateTable) {
+            setParam("intermediateTable", intermediateTable);
         }
     }
 
@@ -456,7 +400,6 @@ public class HiveMRInput implements IMRInput {
         }
 
     }
-
 
     private static void appendHiveOverrideProperties(final KylinConfig kylinConfig, StringBuilder hiveCmd) {
         final Map<String, String> hiveConfOverride = kylinConfig.getHiveConfigOverride();

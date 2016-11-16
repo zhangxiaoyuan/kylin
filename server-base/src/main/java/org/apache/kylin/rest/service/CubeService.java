@@ -46,11 +46,12 @@ import org.apache.kylin.engine.mr.common.HadoopShellExecutable;
 import org.apache.kylin.engine.mr.common.MapReduceExecutable;
 import org.apache.kylin.job.exception.JobException;
 import org.apache.kylin.job.execution.DefaultChainedExecutable;
+import org.apache.kylin.job.execution.ExecutableManager;
 import org.apache.kylin.job.execution.ExecutableState;
-import org.apache.kylin.metadata.MetadataConstants;
 import org.apache.kylin.metadata.MetadataManager;
 import org.apache.kylin.metadata.model.SegmentStatusEnum;
 import org.apache.kylin.metadata.model.TableDesc;
+import org.apache.kylin.metadata.model.TableExtDesc;
 import org.apache.kylin.metadata.project.ProjectInstance;
 import org.apache.kylin.metadata.project.ProjectManager;
 import org.apache.kylin.metadata.project.RealizationEntry;
@@ -93,6 +94,9 @@ public class CubeService extends BasicService {
     @Autowired
     private AccessService accessService;
 
+    @Autowired
+    private JobService jobService;
+    
     @PostFilter(Constant.ACCESS_POST_FILTER_READ)
     public List<CubeInstance> listAllCubes(final String cubeName, final String projectName, final String modelName) {
         List<CubeInstance> cubeInstances = null;
@@ -227,7 +231,7 @@ public class CubeService extends BasicService {
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#cube, 'ADMINISTRATION') or hasPermission(#cube, 'MANAGEMENT')")
     public CubeDesc updateCubeAndDesc(CubeInstance cube, CubeDesc desc, String newProjectName, boolean forceUpdate) throws IOException, JobException {
 
-        final List<CubingJob> cubingJobs = listAllCubingJobs(cube.getName(), null, EnumSet.of(ExecutableState.READY, ExecutableState.RUNNING));
+        final List<CubingJob> cubingJobs = jobService.listAllCubingJobs(cube.getName(), null, EnumSet.of(ExecutableState.READY, ExecutableState.RUNNING));
         if (!cubingJobs.isEmpty()) {
             throw new JobException("Cube schema shouldn't be changed with running job.");
         }
@@ -257,7 +261,7 @@ public class CubeService extends BasicService {
 
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_ADMIN + " or hasPermission(#cube, 'ADMINISTRATION') or hasPermission(#cube, 'MANAGEMENT')")
     public void deleteCube(CubeInstance cube) throws IOException, JobException {
-        final List<CubingJob> cubingJobs = listAllCubingJobs(cube.getName(), null, EnumSet.of(ExecutableState.READY, ExecutableState.RUNNING));
+        final List<CubingJob> cubingJobs = jobService.listAllCubingJobs(cube.getName(), null, EnumSet.of(ExecutableState.READY, ExecutableState.RUNNING));
         if (!cubingJobs.isEmpty()) {
             throw new JobException("The cube " + cube.getName() + " has running job, please discard it and try again.");
         }
@@ -357,7 +361,7 @@ public class CubeService extends BasicService {
             throw new InternalErrorException("Cube " + cubeName + " dosen't contain any READY segment");
         }
 
-        final List<CubingJob> cubingJobs = listAllCubingJobs(cube.getName(), null, EnumSet.of(ExecutableState.READY, ExecutableState.RUNNING));
+        final List<CubingJob> cubingJobs = jobService.listAllCubingJobs(cube.getName(), null, EnumSet.of(ExecutableState.READY, ExecutableState.RUNNING));
         if (!cubingJobs.isEmpty()) {
             throw new JobException("Enable is not allowed with a running job.");
         }
@@ -449,18 +453,20 @@ public class CubeService extends BasicService {
      * @param tableName
      */
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_MODELER + " or " + Constant.ACCESS_HAS_ROLE_ADMIN)
-    public void calculateCardinality(String tableName, String submitter) {
+    public void calculateCardinality(String tableName, String submitter) throws IOException {
         String[] dbTableName = HadoopUtil.parseHiveTableName(tableName);
         tableName = dbTableName[0] + "." + dbTableName[1];
         TableDesc table = getMetadataManager().getTableDesc(tableName);
-        final Map<String, String> tableExd = getMetadataManager().getTableDescExd(tableName);
-        if (tableExd == null || table == null) {
+        final TableExtDesc tableExt = getMetadataManager().getTableExt(tableName);
+        if (table == null) {
             IllegalArgumentException e = new IllegalArgumentException("Cannot find table descirptor " + tableName);
             logger.error("Cannot find table descirptor " + tableName, e);
             throw e;
         }
 
         DefaultChainedExecutable job = new DefaultChainedExecutable();
+        //make sure the job could be scheduled when the DistributedScheduler is enable.
+        job.setParam("segmentId", tableName);
         job.setName("Hive Column Cardinality calculation for table '" + tableName + "'");
         job.setSubmitter(submitter);
 
@@ -471,6 +477,7 @@ public class CubeService extends BasicService {
 
         step1.setMapReduceJobClass(HiveColumnCardinalityJob.class);
         step1.setMapReduceParams(param);
+        step1.setParam("segmentId", tableName);
 
         job.addTask(step1);
 
@@ -478,7 +485,10 @@ public class CubeService extends BasicService {
 
         step2.setJobClass(HiveColumnCardinalityUpdateJob.class);
         step2.setJobParams(param);
+        step2.setParam("segmentId", tableName);
         job.addTask(step2);
+        tableExt.setJodID(job.getId());
+        getMetadataManager().saveTableExt(tableExt);
 
         getExecutableManager().addJob(job);
     }
@@ -521,7 +531,7 @@ public class CubeService extends BasicService {
     }
 
     private void releaseAllJobs(CubeInstance cube) {
-        final List<CubingJob> cubingJobs = listAllCubingJobs(cube.getName(), null);
+        final List<CubingJob> cubingJobs = jobService.listAllCubingJobs(cube.getName(), null);
         for (CubingJob cubingJob : cubingJobs) {
             final ExecutableState status = cubingJob.getStatus();
             if (status != ExecutableState.SUCCEED && status != ExecutableState.STOPPED && status != ExecutableState.DISCARDED) {
@@ -572,9 +582,11 @@ public class CubeService extends BasicService {
     @PreAuthorize(Constant.ACCESS_HAS_ROLE_MODELER + " or " + Constant.ACCESS_HAS_ROLE_ADMIN)
     public void calculateCardinalityIfNotPresent(String[] tables, String submitter) throws IOException {
         MetadataManager metaMgr = getMetadataManager();
+        ExecutableManager exeMgt = ExecutableManager.getInstance(getConfig());
         for (String table : tables) {
-            Map<String, String> exdMap = metaMgr.getTableDescExd(table);
-            if (exdMap == null || !exdMap.containsKey(MetadataConstants.TABLE_EXD_CARDINALITY)) {
+            TableExtDesc tableExtDesc = metaMgr.getTableExt(table);
+            String jobID = tableExtDesc.getJodID();
+            if (null == jobID || ExecutableState.RUNNING != exeMgt.getOutput(jobID).getState()) {
                 calculateCardinality(table, submitter);
             }
         }

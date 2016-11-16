@@ -16,7 +16,7 @@
  * limitations under the License.
 */
 
-package org.apache.kylin.job.manager;
+package org.apache.kylin.job.execution;
 
 import java.lang.reflect.Constructor;
 import java.util.HashMap;
@@ -31,12 +31,6 @@ import org.apache.kylin.job.dao.ExecutableOutputPO;
 import org.apache.kylin.job.dao.ExecutablePO;
 import org.apache.kylin.job.exception.IllegalStateTranferException;
 import org.apache.kylin.job.exception.PersistentException;
-import org.apache.kylin.job.execution.AbstractExecutable;
-import org.apache.kylin.job.execution.ChainedExecutable;
-import org.apache.kylin.job.execution.DefaultChainedExecutable;
-import org.apache.kylin.job.execution.DefaultOutput;
-import org.apache.kylin.job.execution.ExecutableState;
-import org.apache.kylin.job.execution.Output;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -50,10 +44,9 @@ public class ExecutableManager {
 
     private static final Logger logger = LoggerFactory.getLogger(ExecutableManager.class);
     private static final ConcurrentHashMap<KylinConfig, ExecutableManager> CACHE = new ConcurrentHashMap<KylinConfig, ExecutableManager>();
-    @SuppressWarnings("unused")
+    
     private final KylinConfig config;
-
-    private ExecutableDao executableDao;
+    private final ExecutableDao executableDao;
 
     public static ExecutableManager getInstance(KylinConfig config) {
         ExecutableManager r = CACHE.get(config);
@@ -72,6 +65,10 @@ public class ExecutableManager {
         return r;
     }
 
+    public static void clearCache() {
+        CACHE.clear();
+    }
+
     private ExecutableManager(KylinConfig config) {
         logger.info("Using metadata url: " + config);
         this.config = config;
@@ -80,6 +77,7 @@ public class ExecutableManager {
 
     public void addJob(AbstractExecutable executable) {
         try {
+            executable.initConfig(config);
             executableDao.addJob(parse(executable));
             addJobOutput(executable);
         } catch (PersistentException e) {
@@ -241,11 +239,30 @@ public class ExecutableManager {
         }
     }
 
+    public void resumeRunningJobForce(String jobId) {
+        AbstractExecutable job = getJob(jobId);
+        if (job == null) {
+            return;
+        }
+
+        if (job instanceof DefaultChainedExecutable) {
+            List<AbstractExecutable> tasks = ((DefaultChainedExecutable) job).getTasks();
+            for (AbstractExecutable task : tasks) {
+                if (task.getStatus() == ExecutableState.RUNNING) {
+                    updateJobOutput(task.getId(), ExecutableState.READY, null, null);
+                    break;
+                }
+            }
+        }
+        updateJobOutput(jobId, ExecutableState.READY, null, null);
+    }
+
     public void resumeJob(String jobId) {
         AbstractExecutable job = getJob(jobId);
         if (job == null) {
             return;
         }
+
         if (job instanceof DefaultChainedExecutable) {
             List<AbstractExecutable> tasks = ((DefaultChainedExecutable) job).getTasks();
             for (AbstractExecutable task : tasks) {
@@ -260,6 +277,10 @@ public class ExecutableManager {
 
     public void discardJob(String jobId) {
         AbstractExecutable job = getJob(jobId);
+        if (job == null) {
+            return;
+        }
+
         if (job instanceof DefaultChainedExecutable) {
             List<AbstractExecutable> tasks = ((DefaultChainedExecutable) job).getTasks();
             for (AbstractExecutable task : tasks) {
@@ -348,7 +369,7 @@ public class ExecutableManager {
         return result;
     }
 
-    private static AbstractExecutable parseTo(ExecutablePO executablePO) {
+    private AbstractExecutable parseTo(ExecutablePO executablePO) {
         if (executablePO == null) {
             logger.warn("executablePO is null");
             return null;
@@ -358,6 +379,7 @@ public class ExecutableManager {
             Class<? extends AbstractExecutable> clazz = ClassUtil.forName(type, AbstractExecutable.class);
             Constructor<? extends AbstractExecutable> constructor = clazz.getConstructor();
             AbstractExecutable result = constructor.newInstance();
+            result.initConfig(config);
             result.setId(executablePO.getUuid());
             result.setName(executablePO.getName());
             result.setParams(executablePO.getParams());

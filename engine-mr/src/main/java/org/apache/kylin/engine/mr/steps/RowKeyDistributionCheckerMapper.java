@@ -63,7 +63,7 @@ public class RowKeyDistributionCheckerMapper extends KylinMapper<Text, Text, Tex
     }
 
     @Override
-    public void map(Text key, Text value, Context context) throws IOException, InterruptedException {
+    public void doMap(Text key, Text value, Context context) throws IOException, InterruptedException {
         for (Text t : keyList) {
             if (key.compareTo(t) < 0) {
                 Long v = resultMap.get(t);
@@ -76,7 +76,7 @@ public class RowKeyDistributionCheckerMapper extends KylinMapper<Text, Text, Tex
     }
 
     @Override
-    protected void cleanup(Context context) throws IOException, InterruptedException {
+    protected void doCleanup(Context context) throws IOException, InterruptedException {
         LongWritable outputValue = new LongWritable();
         for (Entry<Text, Long> kv : resultMap.entrySet()) {
             outputValue.set(kv.getValue());

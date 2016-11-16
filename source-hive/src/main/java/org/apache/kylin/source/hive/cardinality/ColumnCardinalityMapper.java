@@ -66,7 +66,7 @@ public class ColumnCardinalityMapper<T> extends KylinMapper<T, Object, IntWritab
     }
 
     @Override
-    public void map(T key, Object value, Context context) throws IOException, InterruptedException {
+    public void doMap(T key, Object value, Context context) throws IOException, InterruptedException {
         ColumnDesc[] columns = tableDesc.getColumns();
         String[] values = tableInputFormat.parseMapperInput(value);
 
@@ -95,7 +95,7 @@ public class ColumnCardinalityMapper<T> extends KylinMapper<T, Object, IntWritab
     }
 
     @Override
-    protected void cleanup(Context context) throws IOException, InterruptedException {
+    protected void doCleanup(Context context) throws IOException, InterruptedException {
         Iterator<Integer> it = hllcMap.keySet().iterator();
         ByteBuffer buf = ByteBuffer.allocate(BufferedMeasureCodec.DEFAULT_BUFFER_SIZE);
         while (it.hasNext()) {

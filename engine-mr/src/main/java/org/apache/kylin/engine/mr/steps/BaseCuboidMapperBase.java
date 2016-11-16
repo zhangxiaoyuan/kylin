@@ -55,7 +55,7 @@ import com.google.common.collect.Lists;
 
 /**
  */
-public class BaseCuboidMapperBase<KEYIN, VALUEIN> extends KylinMapper<KEYIN, VALUEIN, Text, Text> {
+abstract public class BaseCuboidMapperBase<KEYIN, VALUEIN> extends KylinMapper<KEYIN, VALUEIN, Text, Text> {
     protected static final Logger logger = LoggerFactory.getLogger(BaseCuboidMapperBase.class);
     public static final byte[] HIVE_NULL = Bytes.toBytes("\\N");
     public static final byte[] ONE = Bytes.toBytes("1");
@@ -195,8 +195,6 @@ public class BaseCuboidMapperBase<KEYIN, VALUEIN> extends KylinMapper<KEYIN, VAL
     }
 
     protected void outputKV(Context context) throws IOException, InterruptedException {
-        intermediateTableDesc.sanityCheck(bytesSplitter);
-
         byte[] rowKey = buildKey(bytesSplitter.getSplitBuffers());
         outputKey.set(rowKey, 0, rowKey.length);
 
